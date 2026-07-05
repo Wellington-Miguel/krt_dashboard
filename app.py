@@ -126,15 +126,19 @@ def tela_home():
 
 
 def _tela_home_individual(sessions):
-    col_f1, col_f2 = st.columns(2)
+    col_f1, col_f2, col_f3 = st.columns([1.5, 1, 1])
     pilotos = ["Todos"] + sorted(sessions["nome_piloto"].unique().tolist())
     with col_f1:
-        piloto_sel = st.selectbox("Filtrar por piloto", pilotos)
+        nome_teste_filtro = st.text_input("Filtrar por nome do teste")
     with col_f2:
+        piloto_sel = st.selectbox("Filtrar por piloto", pilotos)
+    with col_f3:
         datas = sorted(sessions["data_teste"].unique().tolist())
         data_sel = st.selectbox("Filtrar por data", ["Todas"] + [str(d) for d in datas])
 
     filtered = sessions.copy()
+    if nome_teste_filtro:
+        filtered = filtered[filtered["nome_teste"].str.contains(nome_teste_filtro, case=False, na=False)]
     if piloto_sel != "Todos":
         filtered = filtered[filtered["nome_piloto"] == piloto_sel]
     if data_sel != "Todas":
@@ -143,10 +147,6 @@ def _tela_home_individual(sessions):
     if filtered.empty:
         st.warning("Nenhuma sessão encontrada para os filtros selecionados.")
         return
-
-    st.markdown("#### Sessões disponíveis")
-    display_cols = ["id_sessao", "nome_teste", "data_teste", "nome_piloto", "config_carro", "observacoes"]
-    st.dataframe(filtered[display_cols], use_container_width=True, hide_index=True)
 
     id_sel = st.selectbox(
         "Selecione uma sessão para análise detalhada",
