@@ -22,7 +22,7 @@ import charts
 def _session_label(sessions_df, id_sessao):
     row = sessions_df[sessions_df["id_sessao"] == id_sessao].iloc[0]
     titulo = row.get("nome_teste") or "(sem título)"
-    return f"#{id_sessao} — {titulo} · {row['nome_piloto']} ({row['data_teste']})"
+    return f"{titulo} · {row['nome_piloto']} ({row['data_teste']})"
 
 
 def _session_kpis(id_sessao, label, telemetry):
