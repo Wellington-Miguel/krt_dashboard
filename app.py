@@ -541,6 +541,7 @@ def main():
         engine, backend = db.get_engine()
         backend_label = "☁️ Neon.tech (PostgreSQL)" if backend == "neon" else "💾 SQLite local (modo demo)"
         st.caption(f"Banco de dados: {backend_label}")
+        st.caption("by - Wellington Miguel | Eletrônica KRT UFBA")
         if st.button("Sair"):
             st.session_state["autenticado"] = False
             st.rerun()
