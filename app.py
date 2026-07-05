@@ -18,6 +18,30 @@ import db
 import validation
 import charts
 
+
+def _session_label(sessions_df, id_sessao):
+    row = sessions_df[sessions_df["id_sessao"] == id_sessao].iloc[0]
+    titulo = row.get("nome_teste") or "(sem título)"
+    return f"#{id_sessao} — {titulo} · {row['nome_piloto']} ({row['data_teste']})"
+
+
+def _session_kpis(id_sessao, label, telemetry):
+    if telemetry.empty:
+        return None
+    duracao_s = (telemetry["timestamp_ms"].max() - telemetry["timestamp_ms"].min()) / 1000.0
+    return {
+        "sessao": label,
+        "id_sessao": id_sessao,
+        "duracao_s": round(duracao_s, 1),
+        "ax_max": round(telemetry["ax"].max(), 2),
+        "ay_max": round(telemetry["ay"].abs().max(), 2),
+        "temp_dd": round(telemetry["temp_dd"].max(), 1),
+        "temp_td": round(telemetry["temp_td"].max(), 1),
+        "temp_de": round(telemetry["temp_de"].max(), 1),
+        "temp_te": round(telemetry["temp_te"].max(), 1),
+        "thermocouple_max": round(telemetry["thermocouple"].max(), 1),
+    }
+
 st.set_page_config(
     page_title="KRT — Dashboard de Telemetria",
     page_icon="🏁",
@@ -88,6 +112,20 @@ def tela_home():
                 "para enviar o primeiro datalog.")
         return
 
+    modo = st.radio(
+        "Modo de análise",
+        ["Sessão individual", "Grupo de Teste (comparativo)"],
+        horizontal=True,
+    )
+    st.markdown("---")
+
+    if modo == "Sessão individual":
+        _tela_home_individual(sessions)
+    else:
+        _tela_home_grupo()
+
+
+def _tela_home_individual(sessions):
     col_f1, col_f2 = st.columns(2)
     pilotos = ["Todos"] + sorted(sessions["nome_piloto"].unique().tolist())
     with col_f1:
@@ -107,14 +145,13 @@ def tela_home():
         return
 
     st.markdown("#### Sessões disponíveis")
-    display_cols = ["id_sessao", "data_teste", "nome_piloto", "config_carro", "observacoes"]
+    display_cols = ["id_sessao", "nome_teste", "data_teste", "nome_piloto", "config_carro", "observacoes"]
     st.dataframe(filtered[display_cols], use_container_width=True, hide_index=True)
 
     id_sel = st.selectbox(
         "Selecione uma sessão para análise detalhada",
         filtered["id_sessao"].tolist(),
-        format_func=lambda i: f"#{i} — {filtered[filtered['id_sessao']==i]['nome_piloto'].values[0]} "
-                              f"({filtered[filtered['id_sessao']==i]['data_teste'].values[0]})"
+        format_func=lambda i: _session_label(filtered, i),
     )
 
     telemetry = db.load_session_telemetry(id_sel)
@@ -173,8 +210,83 @@ def tela_home():
     with tab4:
         st.plotly_chart(charts.imu_chart(telemetry), use_container_width=True)
 
-    if not vp_check.get("vel_nan_pct", 1) < validation.VELOCIDADE_NULL_THRESHOLD:
-        pass  # já alertado acima — gráfico de velocidade omitido de propósito
+
+def _tela_home_grupo():
+    grupos = db.list_test_groups()
+    if grupos.empty:
+        st.info("Nenhum Grupo de Teste cadastrado ainda. Crie um na aba **Ingestão de Testes** "
+                "(sub-aba 'Grupo de Testes') para comparar vários ensaios juntos.")
+        return
+
+    id_grupo = st.selectbox(
+        "Selecione o Grupo de Teste",
+        grupos["id_grupo"].tolist(),
+        format_func=lambda i: f"{grupos[grupos['id_grupo']==i]['nome_grupo'].values[0]} "
+                              f"({grupos[grupos['id_grupo']==i]['data_criacao'].values[0]})",
+    )
+    descricao = grupos[grupos["id_grupo"] == id_grupo]["descricao"].values[0]
+    if descricao:
+        st.caption(descricao)
+
+    sessions_in_group = db.list_sessions_in_group(id_grupo)
+    if sessions_in_group.empty:
+        st.warning("Este grupo ainda não possui sessões vinculadas.")
+        return
+
+    all_ids = sessions_in_group["id_sessao"].tolist()
+    ids_sel = st.multiselect(
+        "Sessões a incluir na comparação",
+        all_ids,
+        default=all_ids,
+        format_func=lambda i: _session_label(sessions_in_group, i),
+    )
+    if not ids_sel:
+        st.warning("Selecione ao menos uma sessão.")
+        return
+
+    telemetry_by_id = {}
+    kpi_rows = []
+    warnings_by_session = []
+    for i in ids_sel:
+        label = _session_label(sessions_in_group, i)
+        tel = db.load_session_telemetry(i)
+        if tel.empty:
+            continue
+        telemetry_by_id[label] = tel
+        kpi_row = _session_kpis(i, label, tel)
+        if kpi_row:
+            kpi_rows.append(kpi_row)
+        temp_status = validation.check_temp_sensors(tel)
+        for col, info in temp_status.items():
+            if info["stuck"]:
+                warnings_by_session.append(f"⚠️ **{label}** — sensor **{info['label']}** travado "
+                                           f"(σ = {info['std']:.2f}°C).")
+
+    if warnings_by_session:
+        with st.expander(f"⚠️ {len(warnings_by_session)} alerta(s) de sensores neste grupo", expanded=False):
+            for w in warnings_by_session:
+                st.markdown(f'<div class="krt-alert-warn">{w}</div>', unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown("#### Comparativo de KPIs entre sessões")
+    kpi_df = pd.DataFrame(kpi_rows)
+    if not kpi_df.empty:
+        display_kpi = kpi_df.rename(columns={
+            "sessao": "Sessão", "duracao_s": "Duração (s)", "ax_max": "Ax máx (g)",
+            "ay_max": "Ay máx (g)", "temp_dd": "Temp DD (°C)", "temp_td": "Temp TD (°C)",
+            "temp_de": "Temp DE (°C)", "temp_te": "Temp TE (°C)", "thermocouple_max": "Termopar máx (°C)",
+        }).drop(columns=["id_sessao"])
+        st.dataframe(display_kpi, use_container_width=True, hide_index=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    tab1, tab2 = st.tabs(["Diagrama G-G Comparativo", "Temperatura de Pico por Roda"])
+    with tab1:
+        st.plotly_chart(charts.gg_diagram_multi(telemetry_by_id), use_container_width=True)
+        st.caption("Cada cor representa uma sessão do grupo — útil para comparar consistência "
+                   "de pilotagem ou efeito de mudanças de setup ao longo dos dias.")
+    with tab2:
+        if not kpi_df.empty:
+            st.plotly_chart(charts.group_peak_temp_bar(kpi_df), use_container_width=True)
 
 
 # ---------------------------------------------------------------------------
@@ -182,10 +294,19 @@ def tela_home():
 # ---------------------------------------------------------------------------
 def tela_ingestao():
     st.markdown("## 📥 Ingestão de Testes")
-    st.caption("Formulário de metadados + upload do datalog CSV gerado pela ESP32. "
-               "Upload em lote (Bulk Insert) para o banco de dados na nuvem.")
+    st.caption("Envie um único ensaio ou vários de uma vez, agrupando-os para análise conjunta "
+               "(ex: uma sequência de testes ao longo de vários dias).")
 
-    with st.form("form_ingestao"):
+    tab_unico, tab_lote = st.tabs(["🔹 Teste Único", "📚 Grupo de Testes (múltiplos arquivos)"])
+    with tab_unico:
+        _tela_ingestao_unica()
+    with tab_lote:
+        _tela_ingestao_lote()
+
+
+def _tela_ingestao_unica():
+    with st.form("form_ingestao_unica"):
+        nome_teste = st.text_input("Nome do teste", placeholder="Ex: Frenagem — Curva 3, ensaio 2")
         c1, c2 = st.columns(2)
         with c1:
             data_teste = st.date_input("Data do teste", value=date.today())
@@ -198,8 +319,8 @@ def tela_ingestao():
         submitted = st.form_submit_button("Enviar sessão", use_container_width=True)
 
     if submitted:
-        if not nome_piloto or not arquivo:
-            st.error("Preencha o nome do piloto e selecione um arquivo CSV.")
+        if not nome_teste or not nome_piloto or not arquivo:
+            st.error("Preencha o nome do teste, o nome do piloto e selecione um arquivo CSV.")
             return
         try:
             df = db.parse_datalog_csv(arquivo)
@@ -209,15 +330,139 @@ def tela_ingestao():
 
         with st.spinner("Validando e enviando dados para o banco..."):
             vp_check = validation.check_velocidade_peso(df)
-            id_sessao = db.insert_session(data_teste, nome_piloto, config_carro, observacoes, df)
+            id_sessao = db.insert_session(nome_teste, data_teste, nome_piloto, config_carro, observacoes, df)
             db.clear_caches()
 
-        st.success(f"✅ Sessão #{id_sessao} cadastrada com sucesso! ({len(df)} registros de telemetria)")
+        st.success(f"✅ Sessão #{id_sessao} — \"{nome_teste}\" cadastrada com sucesso! "
+                   f"({len(df)} registros de telemetria)")
         for w in vp_check["warnings"]:
             st.markdown(f'<div class="krt-alert-warn">{w}</div>', unsafe_allow_html=True)
 
         with st.expander("Pré-visualização dos dados enviados"):
             st.dataframe(df.head(20), use_container_width=True)
+
+
+def _tela_ingestao_lote():
+    st.caption("Envie vários datalogs de uma vez (ex: todos os ensaios de um dia de testes). "
+               "Cada arquivo vira uma sessão própria, e todas ficam vinculadas ao Grupo de Teste "
+               "escolhido abaixo — assim depois dá para comparar tudo junto no Painel de Performance.")
+
+    grupos = db.list_test_groups()
+    modo_grupo = st.radio(
+        "Grupo de Teste de destino",
+        ["Criar novo grupo", "Adicionar a um grupo existente"] if not grupos.empty else ["Criar novo grupo"],
+        horizontal=True,
+        key="modo_grupo_lote",
+    )
+
+    novo_nome_grupo, nova_descricao_grupo, id_grupo_existente = None, None, None
+    if modo_grupo == "Criar novo grupo":
+        c1, c2 = st.columns(2)
+        with c1:
+            novo_nome_grupo = st.text_input("Nome do grupo de teste",
+                                            placeholder="Ex: Testes de frenagem — Semana 3")
+        with c2:
+            nova_descricao_grupo = st.text_input("Descrição (opcional)")
+    else:
+        id_grupo_existente = st.selectbox(
+            "Selecione o grupo existente",
+            grupos["id_grupo"].tolist(),
+            format_func=lambda i: grupos[grupos["id_grupo"] == i]["nome_grupo"].values[0],
+        )
+
+    arquivos = st.file_uploader(
+        "Arquivos CSV dos datalogs (ESP32) — selecione vários de uma vez",
+        type=["csv"], accept_multiple_files=True, key="uploader_lote",
+    )
+
+    if not arquivos:
+        st.info("Selecione um ou mais arquivos CSV para configurar os metadados de cada sessão.")
+        return
+
+    st.markdown("#### Metadados de cada sessão")
+    st.caption("Edite livremente os campos abaixo — cada linha corresponde a um arquivo enviado.")
+
+    default_rows = []
+    for f in arquivos:
+        nome_padrao = f.name.rsplit(".", 1)[0]
+        default_rows.append({
+            "arquivo": f.name,
+            "nome_teste": nome_padrao,
+            "data_teste": date.today(),
+            "nome_piloto": "",
+            "config_carro": "",
+            "observacoes": "",
+        })
+    default_df = pd.DataFrame(default_rows)
+
+    edited_df = st.data_editor(
+        default_df,
+        use_container_width=True,
+        hide_index=True,
+        disabled=["arquivo"],
+        column_config={
+            "arquivo": st.column_config.TextColumn("Arquivo"),
+            "nome_teste": st.column_config.TextColumn("Nome do teste", required=True),
+            "data_teste": st.column_config.DateColumn("Data do teste", required=True),
+            "nome_piloto": st.column_config.TextColumn("Piloto", required=True),
+            "config_carro": st.column_config.TextColumn("Configuração do carro"),
+            "observacoes": st.column_config.TextColumn("Observações"),
+        },
+        key="editor_lote",
+    )
+
+    if st.button("Enviar grupo de testes", use_container_width=True):
+        if modo_grupo == "Criar novo grupo" and not novo_nome_grupo:
+            st.error("Dê um nome ao novo grupo de teste.")
+            return
+        if edited_df["nome_teste"].isna().any() or (edited_df["nome_teste"] == "").any():
+            st.error("Preencha o nome do teste para todas as sessões.")
+            return
+        if edited_df["nome_piloto"].isna().any() or (edited_df["nome_piloto"] == "").any():
+            st.error("Preencha o nome do piloto para todas as sessões.")
+            return
+
+        with st.spinner("Processando arquivos e enviando para o banco..."):
+            rows = []
+            parse_errors = []
+            for f, (_, meta) in zip(arquivos, edited_df.iterrows()):
+                try:
+                    df_tel = db.parse_datalog_csv(f)
+                except ValueError as e:
+                    parse_errors.append(f"**{f.name}**: {e}")
+                    continue
+                rows.append({
+                    "nome_teste": meta["nome_teste"],
+                    "data_teste": meta["data_teste"],
+                    "nome_piloto": meta["nome_piloto"],
+                    "config_carro": meta["config_carro"],
+                    "observacoes": meta["observacoes"],
+                    "df": df_tel,
+                })
+
+            if parse_errors:
+                for e in parse_errors:
+                    st.error(e)
+            if not rows:
+                st.error("Nenhum arquivo pôde ser processado.")
+                return
+
+            if modo_grupo == "Criar novo grupo":
+                id_grupo = db.create_test_group(novo_nome_grupo, nova_descricao_grupo)
+            else:
+                id_grupo = id_grupo_existente
+
+            ids_sessao = db.insert_batch_sessions(rows, id_grupo=id_grupo)
+            db.clear_caches()
+
+        st.success(f"✅ {len(ids_sessao)} sessão(ões) cadastrada(s) e vinculada(s) ao grupo com sucesso!")
+
+        for row, id_sessao in zip(rows, ids_sessao):
+            vp_check = validation.check_velocidade_peso(row["df"])
+            if vp_check["warnings"]:
+                with st.expander(f"⚠️ Alertas — Sessão #{id_sessao} \"{row['nome_teste']}\""):
+                    for w in vp_check["warnings"]:
+                        st.markdown(f'<div class="krt-alert-warn">{w}</div>', unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
@@ -235,8 +480,7 @@ def tela_diagnostico():
     id_sel = st.selectbox(
         "Sessão de referência para diagnóstico",
         sessions["id_sessao"].tolist(),
-        format_func=lambda i: f"#{i} — {sessions[sessions['id_sessao']==i]['nome_piloto'].values[0]} "
-                              f"({sessions[sessions['id_sessao']==i]['data_teste'].values[0]})"
+        format_func=lambda i: _session_label(sessions, i),
     )
     telemetry = db.load_session_telemetry(id_sel)
     diagnostics = validation.build_sensor_diagnostics(telemetry)

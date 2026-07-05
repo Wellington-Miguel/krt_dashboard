@@ -94,6 +94,51 @@ def thermocouple_chart(df: pd.DataFrame):
     return fig
 
 
+SESSION_PALETTE = [
+    "#FFD700", "#4FC3F7", "#EF5350", "#66BB6A", "#BA68C8",
+    "#FF8A65", "#90A4AE", "#F06292", "#26A69A", "#FFCA28",
+]
+
+
+def gg_diagram_multi(session_dfs: dict, smooth_window: int = 7):
+    """Diagrama G-G sobrepondo várias sessões (análise de Grupo de Teste).
+    session_dfs: dict {label_da_sessao: dataframe_telemetria}"""
+    fig = go.Figure()
+    for i, (label, df) in enumerate(session_dfs.items()):
+        if df.empty or "ax" not in df or "ay" not in df:
+            continue
+        ax_f = low_pass_filter(df["ax"], smooth_window)
+        ay_f = low_pass_filter(df["ay"], smooth_window)
+        color = SESSION_PALETTE[i % len(SESSION_PALETTE)]
+        fig.add_trace(go.Scatter(
+            x=ay_f, y=ax_f, mode="markers",
+            marker=dict(size=5, color=color, opacity=0.55),
+            name=label,
+        ))
+    fig.add_hline(y=0, line_color=KRT_GRID)
+    fig.add_vline(x=0, line_color=KRT_GRID)
+    fig = _base_layout(fig, "Diagrama G-G Comparativo — Grupo de Teste",
+                        "Aceleração Lateral — Ay (g)", "Aceleração Longitudinal — Ax (g)")
+    fig.update_yaxes(scaleanchor="x", scaleratio=1)
+    return fig
+
+
+def group_peak_temp_bar(kpi_df: pd.DataFrame):
+    """Gráfico de barras agrupadas: temperatura de pico por roda, por sessão.
+    kpi_df deve ter colunas: sessao, temp_dd, temp_td, temp_de, temp_te (picos)."""
+    fig = go.Figure()
+    for col, label in WHEEL_LABELS.items():
+        if col not in kpi_df:
+            continue
+        fig.add_trace(go.Bar(
+            x=kpi_df["sessao"], y=kpi_df[col], name=label, marker_color=WHEEL_COLORS[col],
+        ))
+    fig.update_layout(barmode="group")
+    fig = _base_layout(fig, "Temperatura Máxima por Roda — Comparativo entre Sessões",
+                        "Sessão", "Temperatura de pico (°C)")
+    return fig
+
+
 def imu_chart(df: pd.DataFrame):
     t = (df["timestamp_ms"] - df["timestamp_ms"].min()) / 1000.0
     fig = go.Figure()

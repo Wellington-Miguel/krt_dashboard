@@ -24,6 +24,14 @@ Telemetria Cloud**.
   como MoTeC i2 e RaceStudio.
 - **4 telas:** Autenticação restrita → Home/Painel de Performance → Ingestão de
   Testes → Diagnóstico de Sensores.
+- **Ingestão flexível:** cada sessão tem um **Nome do Teste** próprio (além do piloto).
+  Dá para enviar um ensaio por vez (**Teste Único**) ou vários arquivos CSV de uma vez
+  (**Grupo de Testes**), com uma tabela editável de metadados por arquivo. Sessões de um
+  grupo podem ser de dias diferentes e ficam vinculadas para análise conjunta.
+- **Análise comparativa por Grupo de Teste:** na Home, o modo "Grupo de Teste" mostra
+  uma tabela de KPIs lado a lado, um Diagrama G-G sobrepondo todas as sessões
+  selecionadas (cada uma com uma cor) e um gráfico de temperatura de pico por roda
+  comparando as sessões — ideal para acompanhar evolução ao longo dos dias de teste.
 - **Identidade visual KRT:** fundo escuro (#111111), destaque em amarelo ouro
   (#FFD700), textos em branco.
 
