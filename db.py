@@ -206,6 +206,14 @@ def _ensure_schema_upgrades(engine):
             except Exception:
                 pass  # coluna já existe (ou banco recém-criado já a inclui)
 
+        try:
+            conn.execute(text("ALTER TABLE sessoes_testes ALTER COLUMN nome_piloto DROP NOT NULL"))
+        except Exception:
+            try:
+                conn.execute(text("ALTER TABLE sessoes_testes MODIFY COLUMN nome_piloto VARCHAR(100) NULL"))
+            except Exception:
+                pass
+
 
 def init_db():
     engine, backend = get_engine()
@@ -331,10 +339,10 @@ def available_columns(df: pd.DataFrame) -> list:
 
 def _normalize_optional_text(value):
     if value is None:
-        return None
+        return ""
     if isinstance(value, str):
         value = value.strip()
-        return value or None
+        return value or ""
     return value
 
 
