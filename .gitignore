@@ -1,0 +1,23 @@
+# Segredos
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Banco local (modo demo)
+*.db
+*.sqlite
+*.sqlite3
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+
+# Editores/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

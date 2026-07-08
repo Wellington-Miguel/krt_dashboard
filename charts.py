@@ -15,6 +15,7 @@ app.py decida não exibir a aba correspondente.
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 KRT_GOLD = "#FFD700"
 KRT_WHITE = "#FFFFFF"
@@ -147,6 +148,30 @@ def steering_angle_chart(df: pd.DataFrame):
     return fig
 
 
+def speed_chart(df: pd.DataFrame):
+    """Velocidade ao longo do tempo."""
+    if not _has_data(df, "velocidade"):
+        return None
+    t = _time_seconds(df)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=t, y=df["velocidade"], mode="lines", fill="tozeroy",
+                              line=dict(color=KRT_GOLD, width=2), name="Velocidade"))
+    fig = _base_layout(fig, "Velocidade", "Tempo (s)", "Velocidade (km/h)")
+    return fig
+
+
+def weight_chart(df: pd.DataFrame):
+    """Peso (célula de carga) ao longo do tempo."""
+    if not _has_data(df, "peso"):
+        return None
+    t = _time_seconds(df)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=t, y=df["peso"], mode="lines",
+                              line=dict(color="#4FC3F7", width=2), name="Peso"))
+    fig = _base_layout(fig, "Peso (Célula de Carga)", "Tempo (s)", "Peso")
+    return fig
+
+
 def brake_pressure_chart(df: pd.DataFrame):
     """Pressão do fluido de freio ao longo do tempo (datalogs novos)."""
     if not _has_data(df, "pressao_fluido"):
@@ -251,6 +276,57 @@ def noise_events_timeline_chart(df: pd.DataFrame, noise_events_df: pd.DataFrame)
                               name="Evento de ruído elétrico"))
     fig = _base_layout(fig, "Linha do Tempo — Eventos de Ruído Elétrico x Dinâmica do Carro",
                         "Tempo (s)", "Aceleração (g)")
+    return fig
+
+
+def distribution_histograms(df: pd.DataFrame):
+    """Histogramas de distribuição — quanto tempo/quantos registros o carro passa
+    em cada faixa de força G, velocidade e pressão de freio. Complementa o
+    Diagrama G-G (que mostra só o envelope) evidenciando a frequência de cada
+    faixa. Só inclui os painéis cujos sensores têm dado real nesta sessão."""
+    panels = []
+    if _has_data(df, "ax") or _has_data(df, "ay"):
+        panels.append("g")
+    if _has_data(df, "velocidade"):
+        panels.append("velocidade")
+    if _has_data(df, "pressao_fluido"):
+        panels.append("pressao_fluido")
+    if not panels:
+        return None
+
+    titles = {
+        "g": "Distribuição de G's (Ax/Ay)",
+        "velocidade": "Distribuição de Velocidade",
+        "pressao_fluido": "Distribuição de Pressão de Freio",
+    }
+    fig = make_subplots(rows=1, cols=len(panels), subplot_titles=[titles[p] for p in panels])
+
+    for col_idx, p in enumerate(panels, start=1):
+        if p == "g":
+            if _has_data(df, "ax"):
+                fig.add_trace(go.Histogram(x=df["ax"].dropna(), name="Ax", marker_color=KRT_GOLD,
+                                            opacity=0.65, nbinsx=40), row=1, col=col_idx)
+            if _has_data(df, "ay"):
+                fig.add_trace(go.Histogram(x=df["ay"].dropna(), name="Ay", marker_color="#4FC3F7",
+                                            opacity=0.65, nbinsx=40), row=1, col=col_idx)
+        elif p == "velocidade":
+            fig.add_trace(go.Histogram(x=df["velocidade"].dropna(), name="Velocidade",
+                                        marker_color=KRT_GOLD, nbinsx=40, showlegend=False), row=1, col=col_idx)
+        elif p == "pressao_fluido":
+            fig.add_trace(go.Histogram(x=df["pressao_fluido"].dropna(), name="Pressão de Freio",
+                                        marker_color="#EF5350", nbinsx=40, showlegend=False), row=1, col=col_idx)
+
+    fig.update_layout(
+        barmode="overlay",
+        paper_bgcolor=KRT_BG, plot_bgcolor=KRT_BG,
+        font=dict(color=KRT_WHITE),
+        legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color=KRT_WHITE)),
+        margin=dict(l=10, r=10, t=50, b=10),
+        title=dict(text="Distribuições — Tempo em cada faixa", font=dict(color=KRT_GOLD, size=18)),
+    )
+    fig.update_annotations(font_color=KRT_GOLD)
+    fig.update_xaxes(gridcolor=KRT_GRID, zerolinecolor=KRT_GRID, color=KRT_WHITE)
+    fig.update_yaxes(gridcolor=KRT_GRID, zerolinecolor=KRT_GRID, color=KRT_WHITE, title_text="Contagem")
     return fig
 
 

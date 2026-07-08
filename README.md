@@ -86,5 +86,5 @@ krt_dashboard/
 ├── .streamlit/
 │   ├── config.toml          # Tema visual KRT
 │   └── secrets.toml.example
-└── sample_data/              # Datalogs de exemplo, para teste rápido
+└── summary.py               # Resumo textual automático dos destaques do ensaio
 ```

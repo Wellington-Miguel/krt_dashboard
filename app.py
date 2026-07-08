@@ -23,6 +23,7 @@ from datetime import date
 import db
 import validation
 import charts
+import summary
 
 
 def _session_label(sessions_df, id_sessao):
@@ -209,6 +210,13 @@ def _tela_home_individual(sessions):
     temp_status = validation.check_temp_sensors(telemetry)
     _render_alerts(telemetry, temp_status, noise_events_df)
 
+    # --- Resumo textual automático ---
+    highlights = summary.build_session_highlights(telemetry)
+    if highlights:
+        st.markdown("#### 📝 Resumo do Ensaio")
+        for h in highlights:
+            st.markdown(f"- {h}")
+
     st.markdown("---")
 
     # --- KPIs (só os que fazem sentido para os sensores presentes) ---
@@ -218,6 +226,10 @@ def _tela_home_individual(sessions):
         kpis.append(("Ax máximo", f"{telemetry['ax'].max():.2f} g"))
     if telemetry["ay"].notna().any():
         kpis.append(("Ay máximo", f"{telemetry['ay'].abs().max():.2f} g"))
+    if telemetry["velocidade"].notna().any():
+        kpis.append(("Velocidade máx.", f"{telemetry['velocidade'].max():.0f} km/h"))
+    if telemetry["peso"].notna().any():
+        kpis.append(("Peso médio", f"{telemetry['peso'].mean():.1f}"))
     temp_cols_present = [c for c in ("temp_dd", "temp_td", "temp_de", "temp_te")
                          if telemetry[c].notna().any()]
     if temp_cols_present:
@@ -248,6 +260,8 @@ def _tela_home_individual(sessions):
         ("Temperatura das Rodas", charts.wheel_temp_chart(telemetry, temp_status),
          "Permite avaliar se os ângulos de cambagem e convergência estão corretos, "
          "garantindo que o pneu atinja a janela ideal de funcionamento homogêneo em pista."),
+        ("Velocidade", charts.speed_chart(telemetry), None),
+        ("Peso", charts.weight_chart(telemetry), None),
         ("Termopar", charts.thermocouple_chart(telemetry), None),
         ("Giroscópio", charts.imu_chart(telemetry), None),
         ("Ângulo de Volante", charts.steering_angle_chart(telemetry), None),
@@ -256,6 +270,9 @@ def _tela_home_individual(sessions):
          "Sobrepor ângulo de volante e pressão de freio ajuda a identificar trail-braking "
          "e a coordenação entre entrada de curva e frenagem."),
         ("Traçado GPS", charts.gps_track_chart(telemetry), None),
+        ("Distribuições", charts.distribution_histograms(telemetry),
+         "Mostra a frequência de cada faixa de G, velocidade e pressão de freio — "
+         "complementa o Diagrama G-G indicando quanto tempo o carro passou em cada regime."),
     ]
     available_tabs = [(title, fig, caption) for title, fig, caption in tab_specs if fig is not None]
 
