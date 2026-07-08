@@ -31,7 +31,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from sqlalchemy import (
-    create_engine, MetaData, Table, Column, Integer, String, Text,
+    create_engine, MetaData, Table, Column, Integer, String, Text, inspect,
     Date, DateTime, Float, ForeignKey, select, text
 )
 from sqlalchemy.exc import OperationalError
@@ -195,22 +195,44 @@ def get_metadata():
 
 def _ensure_schema_upgrades(engine):
     """Aplica upgrades incrementais em bancos já existentes (colunas novas
-    adicionadas após o banco já ter sido criado com um schema anterior)."""
-    with engine.begin() as conn:
-        upgrade_stmts = ["ALTER TABLE sessoes_testes ADD COLUMN nome_teste VARCHAR(150)"]
-        for c in NUMERIC_COLUMNS:
-            upgrade_stmts.append(f"ALTER TABLE telemetria_dados ADD COLUMN {c} FLOAT")
-        for stmt in upgrade_stmts:
-            try:
-                conn.execute(text(stmt))
-            except Exception:
-                pass  # coluna já existe (ou banco recém-criado já a inclui)
+    adicionadas após o banco já ter sido criado com um schema anterior).
+    É mais robusto que `metadata.create_all(checkfirst=True)` porque inspeciona
+    as colunas faltantes e as adiciona, em vez de apenas checar a existência da tabela."""
+    inspector = inspect(engine)
+    metadata, sessoes_testes, telemetria_dados, *_ = get_metadata()
 
-        try:
+    with engine.begin() as conn:
+        # Adiciona colunas faltantes em `sessoes_testes`
+        existing_cols_sessao = {c["name"] for c in inspector.get_columns("sessoes_testes")}
+        for col in sessoes_testes.columns:
+            if col.name not in existing_cols_sessao:
+                try:
+                    # A sintaxe de `ADD COLUMN` é padrão, mas o tipo pode precisar de compilação
+                    col_type = col.type.compile(engine.dialect)
+                    conn.execute(text(f"ALTER TABLE sessoes_testes ADD COLUMN {col.name} {col_type}"))
+                except Exception:
+                    pass  # Evita falha se a coluna já existir (condição de corrida)
+
+        # Adiciona colunas faltantes em `telemetria_dados`
+        existing_cols_telemetria = {c["name"] for c in inspector.get_columns("telemetria_dados")}
+        for col in telemetria_dados.columns:
+            if col.name not in existing_cols_telemetria:
+                try:
+                    col_type = col.type.compile(engine.dialect)
+                    conn.execute(text(f"ALTER TABLE telemetria_dados ADD COLUMN {col.name} {col_type}"))
+                except Exception:
+                    pass
+
+        # Garante que `nome_piloto` seja opcional (nullable)
+        if engine.dialect.name == "postgresql":
             conn.execute(text("ALTER TABLE sessoes_testes ALTER COLUMN nome_piloto DROP NOT NULL"))
-        except Exception:
+        else:  # sqlite
             try:
-                conn.execute(text("ALTER TABLE sessoes_testes MODIFY COLUMN nome_piloto VARCHAR(100) NULL"))
+                conn.execute(text("ALTER TABLE sessoes_testes RENAME TO _sessoes_testes_old"))
+                metadata.tables["sessoes_testes"].create(conn)
+                cols = ", ".join([c.name for c in sessoes_testes.columns if c.name in existing_cols_sessao])
+                conn.execute(text(f"INSERT INTO sessoes_testes ({cols}) SELECT {cols} FROM _sessoes_testes_old"))
+                conn.execute(text("DROP TABLE _sessoes_testes_old"))
             except Exception:
                 pass
 
