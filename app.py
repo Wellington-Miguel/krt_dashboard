@@ -4,8 +4,14 @@ Kamikaze Racing Team — Formula SAE UFBA
 
 Implementa o Documento de Especificação Arquitetural:
  - Persistência via Neon.tech (PostgreSQL Serverless), com fallback SQLite local
- - Camada de validação e consistência (Sanity Check)
- - Diagrama G-G e Gradiente Térmico das Rodas (metodologia MoTeC i2 / RaceStudio)
+ - Schema de telemetria em superconjunto: convive com o datalog "clássico"
+   (Ax/Ay/Az, Gx/Gy/Gz, Temp DD/TD/DE/TE, Thermocouple, Peso, Velocidade) e o
+   datalog novo (Ângulo de Volante, Pressão de Fluido de Freio, GPS) — cada
+   tela/gráfico exibe só o que o ensaio carregado realmente possui.
+ - Camada de validação e consistência (Sanity Check), incluindo detecção de
+   RUÍDO ELÉTRICO na comunicação serial da ESP32 (linhas corrompidas do datalog).
+ - Diagrama G-G, Gradiente Térmico das Rodas, Direção x Frenagem, Traçado GPS
+   (metodologia MoTeC i2 / RaceStudio).
  - 4 telas: Autenticação, Home/Performance, Ingestão de Testes, Diagnóstico de Sensores
  - Identidade visual KRT: fundo #111111, destaque em amarelo ouro #FFD700
 """
@@ -29,18 +35,22 @@ def _session_kpis(id_sessao, label, telemetry):
     if telemetry.empty:
         return None
     duracao_s = (telemetry["timestamp_ms"].max() - telemetry["timestamp_ms"].min()) / 1000.0
-    return {
-        "sessao": label,
-        "id_sessao": id_sessao,
-        "duracao_s": round(duracao_s, 1),
-        "ax_max": round(telemetry["ax"].max(), 2),
-        "ay_max": round(telemetry["ay"].abs().max(), 2),
-        "temp_dd": round(telemetry["temp_dd"].max(), 1),
-        "temp_td": round(telemetry["temp_td"].max(), 1),
-        "temp_de": round(telemetry["temp_de"].max(), 1),
-        "temp_te": round(telemetry["temp_te"].max(), 1),
-        "thermocouple_max": round(telemetry["thermocouple"].max(), 1),
-    }
+    row = {"sessao": label, "id_sessao": id_sessao, "duracao_s": round(duracao_s, 1)}
+    if db.available_columns(telemetry):
+        pass  # apenas para deixar claro que o resto é condicional
+    if "ax" in telemetry and telemetry["ax"].notna().any():
+        row["ax_max"] = round(telemetry["ax"].max(), 2)
+    if "ay" in telemetry and telemetry["ay"].notna().any():
+        row["ay_max"] = round(telemetry["ay"].abs().max(), 2)
+    for col in ("temp_dd", "temp_td", "temp_de", "temp_te"):
+        if col in telemetry and telemetry[col].notna().any():
+            row[col] = round(telemetry[col].max(), 1)
+    if "thermocouple" in telemetry and telemetry["thermocouple"].notna().any():
+        row["thermocouple_max"] = round(telemetry["thermocouple"].max(), 1)
+    if "pressao_fluido" in telemetry and telemetry["pressao_fluido"].notna().any():
+        row["pressao_max"] = round(telemetry["pressao_fluido"].max(), 2)
+    return row
+
 
 st.set_page_config(
     page_title="KRT — Dashboard de Telemetria",
@@ -67,8 +77,9 @@ st.markdown("""
     .krt-alert-ok { background-color: #142d1a; border-left: 4px solid #4CAF50; padding: 10px 14px; border-radius: 4px; margin-bottom: 8px;}
     .krt-alert-warn { background-color: #332b00; border-left: 4px solid #FFD700; padding: 10px 14px; border-radius: 4px; margin-bottom: 8px;}
     .krt-alert-fail { background-color: #3a1414; border-left: 4px solid #EF5350; padding: 10px 14px; border-radius: 4px; margin-bottom: 8px;}
+    .krt-alert-noise { background-color: #2a1030; border-left: 4px solid #BA68C8; padding: 10px 14px; border-radius: 4px; margin-bottom: 8px;}
     .krt-kpi { background-color: #1a1a1a; border: 1px solid #333; border-radius: 8px; padding: 14px; text-align:center;}
-    .krt-kpi .value { font-size: 28px; font-weight: 800; color: #FFD700; }
+    .krt-kpi .value { font-size: 26px; font-weight: 800; color: #FFD700; }
     .krt-kpi .label { font-size: 13px; color: #ccc; }
     hr { border-color: #333; }
 </style>
@@ -125,6 +136,35 @@ def tela_home():
         _tela_home_grupo()
 
 
+def _render_alerts(telemetry, temp_status, noise_events_df):
+    vp_check = validation.check_velocidade_peso(telemetry)
+    for w in vp_check["warnings"]:
+        st.markdown(f'<div class="krt-alert-warn">{w}</div>', unsafe_allow_html=True)
+
+    for col, info in temp_status.items():
+        if info["stuck"]:
+            st.markdown(
+                f'<div class="krt-alert-warn">⚠️ Sensor de temperatura '
+                f'<b>{info["label"]}</b> aparenta estar travado '
+                f'(σ = {info["std"]:.2f}°C, média {info["mean"]:.1f}°C) — sem modulação térmica. '
+                f'Verifique o sensor infravermelho antes do próximo ensaio.</div>',
+                unsafe_allow_html=True
+            )
+
+    gps = validation.check_gps(telemetry)
+    if gps["present"] and gps["sem_fix"]:
+        st.markdown(
+            f'<div class="krt-alert-warn">⚠️ Sem fix de GPS válido em '
+            f'{gps["no_fix_pct"]*100:.0f}% dos registros — o traçado do percurso pode '
+            f'estar incompleto ou ausente.</div>',
+            unsafe_allow_html=True
+        )
+
+    noise_summary = validation.summarize_noise_events(noise_events_df)
+    for w in noise_summary["warnings"]:
+        st.markdown(f'<div class="krt-alert-noise">{w}</div>', unsafe_allow_html=True)
+
+
 def _tela_home_individual(sessions):
     col_f1, col_f2, col_f3 = st.columns([1.5, 1, 1])
     pilotos = ["Todos"] + sorted(sessions["nome_piloto"].unique().tolist())
@@ -158,57 +198,94 @@ def _tela_home_individual(sessions):
     if telemetry.empty:
         st.warning("Esta sessão não possui dados de telemetria associados.")
         return
+    noise_events_df = db.load_session_noise_events(id_sel)
 
     # --- Sanity check ---
-    vp_check = validation.check_velocidade_peso(telemetry)
     temp_status = validation.check_temp_sensors(telemetry)
-
-    for w in vp_check["warnings"]:
-        st.markdown(f'<div class="krt-alert-warn">{w}</div>', unsafe_allow_html=True)
-    for col, info in temp_status.items():
-        if info["stuck"]:
-            st.markdown(
-                f'<div class="krt-alert-warn">⚠️ Sensor de temperatura '
-                f'<b>{info["label"]}</b> aparenta estar travado '
-                f'(σ = {info["std"]:.2f}°C, média {info["mean"]:.1f}°C) — sem modulação térmica. '
-                f'Verifique o sensor infravermelho antes do próximo ensaio.</div>',
-                unsafe_allow_html=True
-            )
+    _render_alerts(telemetry, temp_status, noise_events_df)
 
     st.markdown("---")
 
-    # --- KPIs ---
+    # --- KPIs (só os que fazem sentido para os sensores presentes) ---
     duracao_s = (telemetry["timestamp_ms"].max() - telemetry["timestamp_ms"].min()) / 1000.0
-    k1, k2, k3, k4, k5 = st.columns(5)
-    kpis = [
-        (k1, "Duração do ensaio", f"{duracao_s:.0f} s"),
-        (k2, "Ax máximo", f"{telemetry['ax'].max():.2f} g"),
-        (k3, "Ay máximo", f"{telemetry['ay'].abs().max():.2f} g"),
-        (k4, "Temp. máx. roda", f"{telemetry[['temp_dd','temp_td','temp_de','temp_te']].max().max():.0f} °C"),
-        (k5, "Termopar máx.", f"{telemetry['thermocouple'].max():.0f} °C"),
-    ]
-    for col, label, value in kpis:
+    kpis = [("Duração do ensaio", f"{duracao_s:.0f} s")]
+    if telemetry["ax"].notna().any():
+        kpis.append(("Ax máximo", f"{telemetry['ax'].max():.2f} g"))
+    if telemetry["ay"].notna().any():
+        kpis.append(("Ay máximo", f"{telemetry['ay'].abs().max():.2f} g"))
+    temp_cols_present = [c for c in ("temp_dd", "temp_td", "temp_de", "temp_te")
+                         if telemetry[c].notna().any()]
+    if temp_cols_present:
+        kpis.append(("Temp. máx. roda", f"{telemetry[temp_cols_present].max().max():.0f} °C"))
+    if telemetry["thermocouple"].notna().any():
+        kpis.append(("Termopar máx.", f"{telemetry['thermocouple'].max():.0f} °C"))
+    if telemetry["pressao_fluido"].notna().any():
+        kpis.append(("Pressão freio máx.", f"{telemetry['pressao_fluido'].max():.1f}"))
+    if telemetry["angulo_volante"].notna().any():
+        kpis.append(("Amplitude volante", f"{telemetry['angulo_volante'].max() - telemetry['angulo_volante'].min():.0f}°"))
+    if noise_events_df is not None and not noise_events_df.empty:
+        kpis.append(("Eventos de ruído", f"{len(noise_events_df)}"))
+
+    kpi_cols = st.columns(len(kpis))
+    for col, (label, value) in zip(kpi_cols, kpis):
         with col:
             st.markdown(f'<div class="krt-kpi"><div class="value">{value}</div>'
                         f'<div class="label">{label}</div></div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # --- Gráficos ---
-    tab1, tab2, tab3, tab4 = st.tabs(["Diagrama G-G", "Temperatura das Rodas", "Termopar", "Giroscópio"])
-    with tab1:
-        st.plotly_chart(charts.gg_diagram(telemetry), use_container_width=True)
-        st.caption("Uma distribuição circular homogênea indica que o piloto consegue explorar "
-                   "eficientemente a frenagem combinada com o contorno de curva, mapeando o "
-                   "limite real dos pneus. (Filtro low-pass aplicado para reduzir ruído elétrico.)")
-    with tab2:
-        st.plotly_chart(charts.wheel_temp_chart(telemetry, temp_status), use_container_width=True)
-        st.caption("Permite avaliar se os ângulos de cambagem e convergência estão corretos, "
-                   "garantindo que o pneu atinja a janela ideal de funcionamento homogêneo em pista.")
-    with tab3:
-        st.plotly_chart(charts.thermocouple_chart(telemetry), use_container_width=True)
-    with tab4:
-        st.plotly_chart(charts.imu_chart(telemetry), use_container_width=True)
+    # --- Gráficos: só entram na aba os que têm dado real nesta sessão ---
+    tab_specs = [
+        ("Diagrama G-G", charts.gg_diagram(telemetry),
+         "Uma distribuição circular homogênea indica que o piloto consegue explorar "
+         "eficientemente a frenagem combinada com o contorno de curva, mapeando o "
+         "limite real dos pneus. (Filtro low-pass aplicado para reduzir ruído elétrico.)"),
+        ("Temperatura das Rodas", charts.wheel_temp_chart(telemetry, temp_status),
+         "Permite avaliar se os ângulos de cambagem e convergência estão corretos, "
+         "garantindo que o pneu atinja a janela ideal de funcionamento homogêneo em pista."),
+        ("Termopar", charts.thermocouple_chart(telemetry), None),
+        ("Giroscópio", charts.imu_chart(telemetry), None),
+        ("Ângulo de Volante", charts.steering_angle_chart(telemetry), None),
+        ("Pressão de Freio", charts.brake_pressure_chart(telemetry), None),
+        ("Direção x Frenagem", charts.steering_brake_combined_chart(telemetry),
+         "Sobrepor ângulo de volante e pressão de freio ajuda a identificar trail-braking "
+         "e a coordenação entre entrada de curva e frenagem."),
+        ("Traçado GPS", charts.gps_track_chart(telemetry), None),
+    ]
+    available_tabs = [(title, fig, caption) for title, fig, caption in tab_specs if fig is not None]
+
+    if not available_tabs:
+        st.info("Esta sessão não possui dados suficientes para gerar gráficos.")
+    else:
+        tabs = st.tabs([t[0] for t in available_tabs])
+        for tab, (title, fig, caption) in zip(tabs, available_tabs):
+            with tab:
+                st.plotly_chart(fig, use_container_width=True)
+                if caption:
+                    st.caption(caption)
+
+    # --- Diagnóstico de ruído elétrico (com amostragem da linha de tempo) ---
+    if noise_events_df is not None and not noise_events_df.empty:
+        st.markdown("---")
+        st.markdown("#### ⚡ Ruído elétrico detectado no datalog")
+        noise_chart = charts.noise_events_timeline_chart(telemetry, noise_events_df)
+        if noise_chart is not None:
+            st.plotly_chart(noise_chart, use_container_width=True)
+            st.caption("As linhas verticais marcam o instante aproximado de cada trecho corrompido "
+                       "por ruído elétrico/falha de comunicação serial da ESP32 — compare com a "
+                       "aceleração para ver se coincide com impactos/vibração ou parece um problema "
+                       "puramente elétrico (aterramento, EMI de ignição, etc.).")
+        with st.expander(f"Ver amostra bruta dos {len(noise_events_df)} evento(s) de ruído"):
+            display_noise = noise_events_df[["linha_arquivo", "timestamp_ms_referencia", "amostra_bruta"]].rename(
+                columns={"linha_arquivo": "Linha do arquivo", "timestamp_ms_referencia": "Tempo de referência (ms)",
+                         "amostra_bruta": "Amostra bruta (truncada)"})
+            st.dataframe(display_noise, use_container_width=True, hide_index=True)
+
+    if telemetry["satelites"].notna().any():
+        gps_chart = charts.gps_satellites_chart(telemetry)
+        if gps_chart is not None:
+            with st.expander("Qualidade do sinal GPS"):
+                st.plotly_chart(gps_chart, use_container_width=True)
 
 
 def _tela_home_grupo():
@@ -261,9 +338,12 @@ def _tela_home_grupo():
             if info["stuck"]:
                 warnings_by_session.append(f"⚠️ **{label}** — sensor **{info['label']}** travado "
                                            f"(σ = {info['std']:.2f}°C).")
+        noise_df = db.load_session_noise_events(i)
+        if noise_df is not None and not noise_df.empty:
+            warnings_by_session.append(f"⚡ **{label}** — {len(noise_df)} evento(s) de ruído elétrico no datalog.")
 
     if warnings_by_session:
-        with st.expander(f"⚠️ {len(warnings_by_session)} alerta(s) de sensores neste grupo", expanded=False):
+        with st.expander(f"⚠️ {len(warnings_by_session)} alerta(s) neste grupo", expanded=False):
             for w in warnings_by_session:
                 st.markdown(f'<div class="krt-alert-warn">{w}</div>', unsafe_allow_html=True)
 
@@ -271,22 +351,32 @@ def _tela_home_grupo():
     st.markdown("#### Comparativo de KPIs entre sessões")
     kpi_df = pd.DataFrame(kpi_rows)
     if not kpi_df.empty:
-        display_kpi = kpi_df.rename(columns={
+        rename_map = {
             "sessao": "Sessão", "duracao_s": "Duração (s)", "ax_max": "Ax máx (g)",
             "ay_max": "Ay máx (g)", "temp_dd": "Temp DD (°C)", "temp_td": "Temp TD (°C)",
             "temp_de": "Temp DE (°C)", "temp_te": "Temp TE (°C)", "thermocouple_max": "Termopar máx (°C)",
-        }).drop(columns=["id_sessao"])
+            "pressao_max": "Pressão freio máx.",
+        }
+        display_kpi = kpi_df.rename(columns=rename_map).drop(columns=["id_sessao"])
         st.dataframe(display_kpi, use_container_width=True, hide_index=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
-    tab1, tab2 = st.tabs(["Diagrama G-G Comparativo", "Temperatura de Pico por Roda"])
-    with tab1:
-        st.plotly_chart(charts.gg_diagram_multi(telemetry_by_id), use_container_width=True)
-        st.caption("Cada cor representa uma sessão do grupo — útil para comparar consistência "
-                   "de pilotagem ou efeito de mudanças de setup ao longo dos dias.")
-    with tab2:
-        if not kpi_df.empty:
-            st.plotly_chart(charts.group_peak_temp_bar(kpi_df), use_container_width=True)
+    group_tab_specs = [
+        ("Diagrama G-G Comparativo", charts.gg_diagram_multi(telemetry_by_id),
+         "Cada cor representa uma sessão do grupo — útil para comparar consistência "
+         "de pilotagem ou efeito de mudanças de setup ao longo dos dias."),
+        ("Temperatura de Pico por Roda", charts.group_peak_temp_bar(kpi_df) if not kpi_df.empty else None, None),
+    ]
+    available_group_tabs = [(t, f, c) for t, f, c in group_tab_specs if f is not None]
+    if not available_group_tabs:
+        st.info("Nenhuma das sessões selecionadas possui dados suficientes para os gráficos comparativos.")
+    else:
+        tabs = st.tabs([t[0] for t in available_group_tabs])
+        for tab, (title, fig, caption) in zip(tabs, available_group_tabs):
+            with tab:
+                st.plotly_chart(fig, use_container_width=True)
+                if caption:
+                    st.caption(caption)
 
 
 # ---------------------------------------------------------------------------
@@ -295,7 +385,9 @@ def _tela_home_grupo():
 def tela_ingestao():
     st.markdown("## 📥 Ingestão de Testes")
     st.caption("Envie um único ensaio ou vários de uma vez, agrupando-os para análise conjunta "
-               "(ex: uma sequência de testes ao longo de vários dias).")
+               "(ex: uma sequência de testes ao longo de vários dias). O parser reconhece tanto "
+               "o datalog clássico quanto o novo (com Ângulo de Volante, Pressão de Freio e GPS) "
+               "e aceita arquivos com qualquer subconjunto de colunas reconhecidas.")
 
     tab_unico, tab_lote = st.tabs(["🔹 Teste Único", "📚 Grupo de Testes (múltiplos arquivos)"])
     with tab_unico:
@@ -323,20 +415,34 @@ def _tela_ingestao_unica():
             st.error("Preencha o nome do teste, o nome do piloto e selecione um arquivo CSV.")
             return
         try:
-            df = db.parse_datalog_csv(arquivo)
+            df, noise_events, unrecognized = db.parse_datalog_csv(arquivo)
         except ValueError as e:
             st.error(str(e))
             return
 
         with st.spinner("Validando e enviando dados para o banco..."):
             vp_check = validation.check_velocidade_peso(df)
-            id_sessao = db.insert_session(nome_teste, data_teste, nome_piloto, config_carro, observacoes, df)
+            id_sessao = db.insert_session(nome_teste, data_teste, nome_piloto, config_carro, observacoes,
+                                           df, noise_events=noise_events)
             db.clear_caches()
 
+        cols_presentes = db.available_columns(df)
+        labels_presentes = ", ".join(db.COLUMN_LABELS.get(c, c) for c in cols_presentes)
         st.success(f"✅ Sessão #{id_sessao} — \"{nome_teste}\" cadastrada com sucesso! "
                    f"({len(df)} registros de telemetria)")
+        st.caption(f"Sensores detectados neste arquivo: {labels_presentes}")
+
         for w in vp_check["warnings"]:
             st.markdown(f'<div class="krt-alert-warn">{w}</div>', unsafe_allow_html=True)
+
+        if noise_events:
+            noise_summary = validation.summarize_noise_events(pd.DataFrame(noise_events).rename(
+                columns={"linha": "linha_arquivo"}))
+            for w in noise_summary["warnings"]:
+                st.markdown(f'<div class="krt-alert-noise">{w}</div>', unsafe_allow_html=True)
+
+        if unrecognized:
+            st.info(f"Colunas do arquivo não reconhecidas (ignoradas): {', '.join(unrecognized)}")
 
         with st.expander("Pré-visualização dos dados enviados"):
             st.dataframe(df.head(20), use_container_width=True)
@@ -427,7 +533,7 @@ def _tela_ingestao_lote():
             parse_errors = []
             for f, (_, meta) in zip(arquivos, edited_df.iterrows()):
                 try:
-                    df_tel = db.parse_datalog_csv(f)
+                    df_tel, noise_events, unrecognized = db.parse_datalog_csv(f)
                 except ValueError as e:
                     parse_errors.append(f"**{f.name}**: {e}")
                     continue
@@ -438,6 +544,8 @@ def _tela_ingestao_lote():
                     "config_carro": meta["config_carro"],
                     "observacoes": meta["observacoes"],
                     "df": df_tel,
+                    "noise_events": noise_events,
+                    "unrecognized": unrecognized,
                 })
 
             if parse_errors:
@@ -459,10 +567,18 @@ def _tela_ingestao_lote():
 
         for row, id_sessao in zip(rows, ids_sessao):
             vp_check = validation.check_velocidade_peso(row["df"])
-            if vp_check["warnings"]:
+            has_alerts = bool(vp_check["warnings"]) or bool(row["noise_events"]) or bool(row["unrecognized"])
+            if has_alerts:
                 with st.expander(f"⚠️ Alertas — Sessão #{id_sessao} \"{row['nome_teste']}\""):
                     for w in vp_check["warnings"]:
                         st.markdown(f'<div class="krt-alert-warn">{w}</div>', unsafe_allow_html=True)
+                    if row["noise_events"]:
+                        noise_summary = validation.summarize_noise_events(
+                            pd.DataFrame(row["noise_events"]).rename(columns={"linha": "linha_arquivo"}))
+                        for w in noise_summary["warnings"]:
+                            st.markdown(f'<div class="krt-alert-noise">{w}</div>', unsafe_allow_html=True)
+                    if row["unrecognized"]:
+                        st.info(f"Colunas não reconhecidas (ignoradas): {', '.join(row['unrecognized'])}")
 
 
 # ---------------------------------------------------------------------------
@@ -470,7 +586,8 @@ def _tela_ingestao_lote():
 # ---------------------------------------------------------------------------
 def tela_diagnostico():
     st.markdown("## 🔧 Diagnóstico de Sensores")
-    st.caption("Status de calibração de cada sensor físico conectado à ESP32 — facilita a manutenção no box.")
+    st.caption("Status de calibração de cada sensor físico conectado à ESP32 — facilita a manutenção no box. "
+               "Apenas sensores presentes no arquivo do ensaio selecionado aparecem na lista.")
 
     sessions = db.list_sessions()
     if sessions.empty:
@@ -483,17 +600,21 @@ def tela_diagnostico():
         format_func=lambda i: _session_label(sessions, i),
     )
     telemetry = db.load_session_telemetry(id_sel)
-    diagnostics = validation.build_sensor_diagnostics(telemetry)
+    noise_events_df = db.load_session_noise_events(id_sel)
+    diagnostics = validation.build_sensor_diagnostics(telemetry, noise_events_df)
 
     status_color = {
         "OK": "krt-alert-ok",
         "FALHA": "krt-alert-fail",
         "TRAVADO": "krt-alert-fail",
         "SEM DADOS": "krt-alert-warn",
+        "SEM FIX": "krt-alert-warn",
         "SUSPEITO (sem variação)": "krt-alert-warn",
+        "ALERTA": "krt-alert-noise",
     }
     status_icon = {
-        "OK": "✅", "FALHA": "❌", "TRAVADO": "🔒", "SEM DADOS": "❔", "SUSPEITO (sem variação)": "⚠️"
+        "OK": "✅", "FALHA": "❌", "TRAVADO": "🔒", "SEM DADOS": "❔",
+        "SEM FIX": "📡", "SUSPEITO (sem variação)": "⚠️", "ALERTA": "⚡",
     }
 
     for d in diagnostics:
@@ -504,6 +625,13 @@ def tela_diagnostico():
             f'<span style="font-size:13px; color:#ccc;">{d["detalhe"]}</span></div>',
             unsafe_allow_html=True
         )
+
+    if noise_events_df is not None and not noise_events_df.empty:
+        with st.expander(f"Ver amostra bruta dos {len(noise_events_df)} evento(s) de ruído elétrico"):
+            display_noise = noise_events_df[["linha_arquivo", "timestamp_ms_referencia", "amostra_bruta"]].rename(
+                columns={"linha_arquivo": "Linha do arquivo", "timestamp_ms_referencia": "Tempo de referência (ms)",
+                         "amostra_bruta": "Amostra bruta (truncada)"})
+            st.dataframe(display_noise, use_container_width=True, hide_index=True)
 
     st.markdown("---")
     st.markdown("#### Sensores do subsistema de Motorização (gerenciados pela ECU FT450)")

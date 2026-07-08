@@ -1,37 +1,44 @@
 # KRT — Dashboard Cloud de Telemetria e Aquisição de Dados
 
-Aplicação Streamlit para a Kamikaze Racing Team (KRT — Formula SAE UFBA), implementada
-conforme o **Documento de Especificação Arquitetural e Requisitos do Dashboard de
-Telemetria Cloud**.
+Aplicação Streamlit para a Kamikaze Racing Team (KRT — Formula SAE UFBA).
 
-## O que a aplicação faz
+## O que mudou nesta versão
 
-- **Persistência em nuvem (Neon.tech):** dados de sessões de teste e telemetria bruta
-  ficam salvos em PostgreSQL Serverless, sobrevivendo aos reinícios do container
-  efêmero do Streamlit Cloud. Se nenhuma credencial do Neon for configurada, a
-  aplicação cai automaticamente para um banco SQLite local (`krt_telemetry.db`),
-  permitindo testar tudo sem depender de nuvem.
-- **Sanity check automático:** ao subir um datalog, a aplicação identifica e alerta
-  (sem quebrar o app) os problemas de hardware já observados nos logs reais
-  (`datalog415.csv` a `datalog481.csv`):
-  - Sensor de Velocidade 100% nulo (NaN).
-  - Sensor de Peso (célula de carga) travado em zero.
-  - Sensor de temperatura infravermelho Temp DE com desvio padrão insignificante
-    (sem modulação), indicando sensor travado — mesmo quando o Temp TD ultrapassa
-    140°C no mesmo ensaio.
-- **Diagrama G-G** (Ay x Ax, com filtro low-pass) e **gráfico de temperatura das 4
-  rodas** sincronizado no tempo, seguindo a metodologia de softwares de aquisição
-  como MoTeC i2 e RaceStudio.
+O datalog mais recente da ESP32 troca os sensores de **Peso**, **Velocidade**,
+**Giroscópio** e **Termopar** por **Ângulo de Volante**, **Pressão de Fluido de
+Freio** e **GPS** (Latitude/Longitude/Satélites) — e o dashboard precisava
+continuar funcionando tanto com o formato antigo quanto com o novo, incluindo
+arquivos com qualquer subconjunto de colunas.
+
+- **Schema em superconjunto + parser por aliases:** o banco agora guarda um
+  superconjunto de todas as colunas já vistas (antigas e novas). O parser de
+  CSV reconhece cada coluna do cabeçalho por nome (tolerando variação de
+  acentuação/maiúsculas/underscore) e mapeia para o nome canônico — colunas
+  ausentes no arquivo ficam nulas, e colunas desconhecidas são apenas
+  ignoradas (com aviso informativo). Isso significa que **qualquer arquivo
+  com qualquer subconjunto de sensores é aceito**, e cada tela/gráfico exibe
+  só o que aquele ensaio realmente possui (abas e KPIs são montados
+  dinamicamente).
+- **Detecção de ruído elétrico na comunicação serial:** ao ingerir um datalog,
+  linhas corrompidas (bytes inválidos, número de campos incorreto ou falha de
+  conversão numérica — sintomas típicos de ruído elétrico/EMI na serial da
+  ESP32) são isoladas automaticamente, sem quebrar a ingestão do restante do
+  arquivo. Cada evento fica registrado (linha do arquivo, tempo de referência
+  e amostra bruta) e é exibido:
+  - como alerta na tela de Ingestão e no Painel de Performance;
+  - com **amostragem bruta** dos trechos corrompidos no Diagnóstico de Sensores;
+  - em um **gráfico de linha do tempo** que sobrepõe os instantes de ruído à
+    magnitude de aceleração da sessão, ajudando a equipe de Eletrônica a ver
+    se o ruído coincide com impacto/vibração (zebra, buraco) ou parece um
+    problema puramente elétrico (aterramento, EMI de ignição/motor).
+- **Novos gráficos:** Ângulo de Volante, Pressão de Fluido de Freio, um
+  gráfico combinado Direção x Frenagem (útil para trail-braking), traçado do
+  percurso via GPS e qualidade do sinal (nº de satélites).
+- **Sanity check automático:** mantém as regras já validadas nos datalogs
+  reais — Velocidade 100% nula, Peso travado em zero, sensor de temperatura
+  travado (baixa variância) — e adiciona verificação de fix de GPS.
 - **4 telas:** Autenticação restrita → Home/Painel de Performance → Ingestão de
   Testes → Diagnóstico de Sensores.
-- **Ingestão flexível:** cada sessão tem um **Nome do Teste** próprio (além do piloto).
-  Dá para enviar um ensaio por vez (**Teste Único**) ou vários arquivos CSV de uma vez
-  (**Grupo de Testes**), com uma tabela editável de metadados por arquivo. Sessões de um
-  grupo podem ser de dias diferentes e ficam vinculadas para análise conjunta.
-- **Análise comparativa por Grupo de Teste:** na Home, o modo "Grupo de Teste" mostra
-  uma tabela de KPIs lado a lado, um Diagrama G-G sobrepondo todas as sessões
-  selecionadas (cada uma com uma cor) e um gráfico de temperatura de pico por roda
-  comparando as sessões — ideal para acompanhar evolução ao longo dos dias de teste.
 - **Identidade visual KRT:** fundo escuro (#111111), destaque em amarelo ouro
   (#FFD700), textos em branco.
 
@@ -46,12 +53,6 @@ streamlit run app.py
 Sem configurar `secrets.toml`, a senha padrão de acesso é `krt2026` e os dados vão
 para um SQLite local — ótimo para testar antes de publicar.
 
-### Testando com os dados reais da equipe
-
-Os 9 arquivos `datalog*.csv` enviados já foram usados para validar as regras de
-sanity check. Você pode subi-los pela tela **Ingestão de Testes** para popular o
-dashboard com dados reais de ensaio.
-
 ## Configurando o Neon.tech (produção)
 
 1. Copie `.streamlit/secrets.toml.example` para `.streamlit/secrets.toml`.
@@ -59,6 +60,9 @@ dashboard com dados reais de ensaio.
    (Dashboard Neon → Connection Details → "Pooled connection").
 3. Defina uma `APP_PASSWORD` forte para a equipe.
 4. **Nunca** commite `secrets.toml` no GitHub — ele já deve entrar no `.gitignore`.
+
+Bancos já existentes recebem as colunas novas automaticamente na inicialização
+(`_ensure_schema_upgrades` em `db.py`), sem precisar recriar o banco.
 
 ## Deploy no Streamlit Cloud
 
@@ -71,13 +75,16 @@ dashboard com dados reais de ensaio.
 
 ```
 krt_dashboard/
-├── app.py                  # Navegação principal e as 4 telas
-├── db.py                   # Conexão Neon.tech/SQLite + schema + bulk insert
-├── validation.py            # Sanity check (velocidade, peso, sensores travados)
-├── charts.py                 # Diagrama G-G, gráfico térmico das rodas, etc.
+├── app.py                  # Navegação principal e as 4 telas (tabs/KPIs dinâmicos)
+├── db.py                   # Conexão Neon.tech/SQLite + schema superconjunto +
+│                            #   parser CSV por aliases + detecção de ruído elétrico
+├── validation.py            # Sanity check (velocidade, peso, sensores travados,
+│                            #   GPS, resumo de eventos de ruído)
+├── charts.py                 # Diagrama G-G, térmico das rodas, volante, freio,
+│                            #   GPS e linha do tempo de ruído elétrico
 ├── requirements.txt
 ├── .streamlit/
 │   ├── config.toml          # Tema visual KRT
 │   └── secrets.toml.example
-└── sample_data/              # Os 9 datalogs enviados, para teste rápido
+└── sample_data/              # Datalogs de exemplo, para teste rápido
 ```
