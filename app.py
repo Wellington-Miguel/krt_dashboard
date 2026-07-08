@@ -86,6 +86,17 @@ st.markdown("""
     .krt-kpi { background-color: #1a1a1a; border: 1px solid #333; border-radius: 8px; padding: 14px; text-align:center;}
     .krt-kpi .value { font-size: 26px; font-weight: 800; color: #FFD700; }
     .krt-kpi .label { font-size: 13px; color: #ccc; }
+    .krt-summary-card {
+        background-color: #1a1a1a; border: 1px solid #333; border-left: 4px solid #FFD700;
+        border-radius: 8px; padding: 16px 20px 8px 20px; margin-bottom: 14px;
+    }
+    .krt-summary-title { color: #FFD700; font-weight: 700; font-size: 15px; margin-bottom: 10px; }
+    .krt-summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0 24px; }
+    .krt-summary-item {
+        font-size: 14px; color: #eee; line-height: 1.5; padding: 8px 0;
+        border-bottom: 1px solid #2a2a2a;
+    }
+    .krt-summary-item:last-child { border-bottom: none; }
     hr { border-color: #333; }
 </style>
 """, unsafe_allow_html=True)
@@ -213,9 +224,14 @@ def _tela_home_individual(sessions):
     # --- Resumo textual automático ---
     highlights = summary.build_session_highlights(telemetry)
     if highlights:
-        st.markdown("#### 📝 Resumo do Ensaio")
-        for h in highlights:
-            st.markdown(f"- {h}")
+        items_html = "".join(f'<div class="krt-summary-item">{h}</div>' for h in highlights)
+        st.markdown(
+            f'<div class="krt-summary-card">'
+            f'<div class="krt-summary-title">📝 Resumo do Ensaio</div>'
+            f'<div class="krt-summary-grid">{items_html}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
     st.markdown("---")
 
