@@ -28,7 +28,11 @@ import charts
 def _session_label(sessions_df, id_sessao):
     row = sessions_df[sessions_df["id_sessao"] == id_sessao].iloc[0]
     titulo = row.get("nome_teste") or "(sem título)"
-    return f"{titulo} · {row['nome_piloto']} ({row['data_teste']})"
+    piloto = row.get("nome_piloto")
+    piloto_text = piloto.strip() if isinstance(piloto, str) else ""
+    if piloto_text:
+        return f"{titulo} · {piloto_text} ({row['data_teste']})"
+    return f"{titulo} · (sem piloto) ({row['data_teste']})"
 
 
 def _session_kpis(id_sessao, label, telemetry):
@@ -167,7 +171,8 @@ def _render_alerts(telemetry, temp_status, noise_events_df):
 
 def _tela_home_individual(sessions):
     col_f1, col_f2, col_f3 = st.columns([1.5, 1, 1])
-    pilotos = ["Todos"] + sorted(sessions["nome_piloto"].unique().tolist())
+    pilotos_raw = [p for p in sessions["nome_piloto"].fillna("").astype(str).str.strip().tolist() if p]
+    pilotos = ["Todos"] + sorted(set(pilotos_raw))
     with col_f1:
         nome_teste_filtro = st.text_input("Filtrar por nome do teste")
     with col_f2:
@@ -402,7 +407,7 @@ def _tela_ingestao_unica():
         c1, c2 = st.columns(2)
         with c1:
             data_teste = st.date_input("Data do teste", value=date.today())
-            nome_piloto = st.text_input("Nome do piloto")
+            nome_piloto = st.text_input("Nome do piloto (opcional)", placeholder="Opcional")
         with c2:
             config_carro = st.text_input("Configuração do carro (setup, pressão de pneu, etc.)")
         observacoes = st.text_area("Observações de campo")
@@ -411,8 +416,8 @@ def _tela_ingestao_unica():
         submitted = st.form_submit_button("Enviar sessão", use_container_width=True)
 
     if submitted:
-        if not nome_teste or not nome_piloto or not arquivo:
-            st.error("Preencha o nome do teste, o nome do piloto e selecione um arquivo CSV.")
+        if not nome_teste or not arquivo:
+            st.error("Preencha o nome do teste e selecione um arquivo CSV.")
             return
         try:
             df, noise_events, unrecognized = db.parse_datalog_csv(arquivo)
@@ -510,7 +515,7 @@ def _tela_ingestao_lote():
             "arquivo": st.column_config.TextColumn("Arquivo"),
             "nome_teste": st.column_config.TextColumn("Nome do teste", required=True),
             "data_teste": st.column_config.DateColumn("Data do teste", required=True),
-            "nome_piloto": st.column_config.TextColumn("Piloto", required=True),
+            "nome_piloto": st.column_config.TextColumn("Piloto"),
             "config_carro": st.column_config.TextColumn("Configuração do carro"),
             "observacoes": st.column_config.TextColumn("Observações"),
         },
@@ -524,10 +529,6 @@ def _tela_ingestao_lote():
         if edited_df["nome_teste"].isna().any() or (edited_df["nome_teste"] == "").any():
             st.error("Preencha o nome do teste para todas as sessões.")
             return
-        if edited_df["nome_piloto"].isna().any() or (edited_df["nome_piloto"] == "").any():
-            st.error("Preencha o nome do piloto para todas as sessões.")
-            return
-
         with st.spinner("Processando arquivos e enviando para o banco..."):
             rows = []
             parse_errors = []

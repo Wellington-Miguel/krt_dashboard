@@ -152,7 +152,7 @@ def get_metadata():
         Column("id_sessao", Integer, primary_key=True, autoincrement=True),
         Column("nome_teste", String(150)),
         Column("data_teste", Date, nullable=False),
-        Column("nome_piloto", String(100), nullable=False),
+        Column("nome_piloto", String(100), nullable=True),
         Column("config_carro", Text),
         Column("observacoes", Text),
         Column("data_upload", DateTime, default=datetime.utcnow),
@@ -329,6 +329,15 @@ def available_columns(df: pd.DataFrame) -> list:
     return [c for c in NUMERIC_COLUMNS if c in df.columns and df[c].notna().any()]
 
 
+def _normalize_optional_text(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = value.strip()
+        return value or None
+    return value
+
+
 def insert_session(nome_teste, data_teste, nome_piloto, config_carro, observacoes,
                     telemetry_df: pd.DataFrame, noise_events=None, id_grupo=None):
     """Insere uma nova sessão de teste + bulk insert dos dados de telemetria e,
@@ -337,6 +346,8 @@ def insert_session(nome_teste, data_teste, nome_piloto, config_carro, observacoe
     metadata, sessoes_testes, telemetria_dados, grupos_teste, grupo_sessoes, eventos_ruido = get_metadata()
     metadata.create_all(engine)
     _ensure_schema_upgrades(engine)
+
+    nome_piloto = _normalize_optional_text(nome_piloto)
 
     with engine.begin() as conn:
         result = conn.execute(
