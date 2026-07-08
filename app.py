@@ -416,7 +416,7 @@ def _tela_ingestao_unica():
         submitted = st.form_submit_button("Enviar sessão", use_container_width=True)
 
     if submitted:
-        if not nome_teste or not arquivo:
+        if not nome_teste.strip() or not arquivo:
             st.error("Preencha o nome do teste e selecione um arquivo CSV.")
             return
         try:
