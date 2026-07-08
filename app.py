@@ -88,15 +88,14 @@ st.markdown("""
     .krt-kpi .label { font-size: 13px; color: #ccc; }
     .krt-summary-card {
         background-color: #1a1a1a; border: 1px solid #333; border-left: 4px solid #FFD700;
-        border-radius: 8px; padding: 16px 20px 8px 20px; margin-bottom: 14px;
+        border-radius: 8px; padding: 16px 20px 20px 20px; margin: 22px 0 14px 0;
     }
-    .krt-summary-title { color: #FFD700; font-weight: 700; font-size: 15px; margin-bottom: 10px; }
-    .krt-summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0 24px; }
+    .krt-summary-title { color: #FFD700; font-weight: 700; font-size: 15px; margin-bottom: 12px; }
+    .krt-summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px 16px; }
     .krt-summary-item {
-        font-size: 14px; color: #eee; line-height: 1.5; padding: 8px 0;
-        border-bottom: 1px solid #2a2a2a;
+        font-size: 14px; color: #eee; line-height: 1.5; padding: 10px 12px;
+        background-color: #141414; border: 1px solid #333; border-radius: 6px;
     }
-    .krt-summary-item:last-child { border-bottom: none; }
     hr { border-color: #333; }
 </style>
 """, unsafe_allow_html=True)
