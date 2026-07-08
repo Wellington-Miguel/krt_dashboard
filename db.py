@@ -150,7 +150,7 @@ def get_metadata():
     sessoes_testes = Table(
         "sessoes_testes", metadata,
         Column("id_sessao", Integer, primary_key=True, autoincrement=True),
-        Column("nome_teste", String(150)),
+        Column("nome_teste", String(150), nullable=False),
         Column("data_teste", Date, nullable=False),
         Column("nome_piloto", String(100), nullable=True),
         Column("config_carro", Text),
