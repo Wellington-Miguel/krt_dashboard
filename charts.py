@@ -239,9 +239,10 @@ def gps_track_color_options(df: pd.DataFrame) -> list:
     return options
 
 
-def gps_track_chart(df: pd.DataFrame, color_by: str = "tempo"):
-    """Traçado do percurso via GPS (Latitude x Longitude), colorido pela
-    variável escolhida (tempo, por padrão) e com hover exibindo a telemetria
+def gps_track_chart(df: pd.DataFrame, color_by: str = "tempo", max_checkpoints: int = 25):
+    """Mapa do circuito percorrido via GPS: contorno suavizado (estilo pista,
+    sem o jitter bruto do GPS) com alguns marcadores esparsos ("checkpoints")
+    coloridos pela variável escolhida, cada um com hover exibindo a telemetria
     completa disponível (velocidade, G, freio, volante) naquele ponto do
     circuito. Retorna None se não houver fix de GPS válido nesta sessão."""
     if not (_has_data(df, "latitude") and _has_data(df, "longitude")):
@@ -250,11 +251,35 @@ def gps_track_chart(df: pd.DataFrame, color_by: str = "tempo"):
     valid = valid[(valid["latitude"] != 0) & (valid["longitude"] != 0)]
     if valid.empty:
         return None
+    valid = valid.sort_values("timestamp_ms").reset_index(drop=True)
 
     t = _time_seconds(valid)
+    # Suaviza o traçado para eliminar o jitter do GPS e desenhar um contorno
+    # contínuo de pista, em vez de ligar todo ponto bruto (que cruza sobre
+    # si mesmo quando o carro está parado/lento ou o fix oscila).
+    lat_smooth = low_pass_filter(valid["latitude"], window=15)
+    lon_smooth = low_pass_filter(valid["longitude"], window=15)
 
-    present_channels = [ch for ch in _GPS_HOVER_CHANNELS if _has_data(valid, ch[0])]
-    customdata = np.column_stack([t] + [valid[col] for col, *_ in present_channels])
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=lon_smooth, y=lat_smooth, mode="lines",
+        line=dict(color="#999999", width=5),
+        name="Traçado do circuito", hoverinfo="skip",
+    ))
+
+    # --- Checkpoints esparsos (poucos pontos, não todo registro bruto) ---
+    duration_s = t.max() - t.min() if len(t) else 0
+    interval = max(duration_s / max_checkpoints, 0.5) if duration_s > 0 else 1.0
+    bins = (t // interval).astype(int)
+    checkpoint_positions = valid.groupby(bins).apply(lambda g: g.index[len(g) // 2]).values
+
+    checkpoints = valid.loc[checkpoint_positions].copy()
+    checkpoints["_lat_smooth"] = lat_smooth.loc[checkpoint_positions].values
+    checkpoints["_lon_smooth"] = lon_smooth.loc[checkpoint_positions].values
+    t_cp = t.loc[checkpoint_positions]
+
+    present_channels = [ch for ch in _GPS_HOVER_CHANNELS if _has_data(checkpoints, ch[0])]
+    customdata = np.column_stack([t_cp.values] + [checkpoints[col].values for col, *_ in present_channels])
 
     hover_lines = ["<b>Tempo:</b> %{customdata[0]:.1f} s"]
     for i, (col, label, fmt, unit) in enumerate(present_channels, start=1):
@@ -262,25 +287,27 @@ def gps_track_chart(df: pd.DataFrame, color_by: str = "tempo"):
         hover_lines.append(f"<b>{label}:</b> %{{customdata[{i}]:{fmt}}}{suffix}")
     hovertemplate = "<br>".join(hover_lines) + "<extra></extra>"
 
-    if color_by != "tempo" and _has_data(valid, color_by):
-        color_series = valid[color_by]
+    if color_by != "tempo" and _has_data(checkpoints, color_by):
+        color_series = checkpoints[color_by]
         colorbar_title = dict(GPS_COLOR_OPTIONS).get(color_by, color_by)
     else:
-        color_series = t
+        color_series = t_cp
         colorbar_title = "Tempo (s)"
 
-    fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=valid["longitude"], y=valid["latitude"], mode="markers+lines",
-        marker=dict(size=5, color=color_series, colorscale=[[0, "#4FC3F7"], [0.5, KRT_GOLD], [1, "#EF5350"]],
+        x=checkpoints["_lon_smooth"], y=checkpoints["_lat_smooth"], mode="markers",
+        marker=dict(size=13, color=color_series, colorscale=[[0, "#4FC3F7"], [0.5, KRT_GOLD], [1, "#EF5350"]],
+                    line=dict(color=KRT_BG, width=1.5),
                     colorbar=dict(title=colorbar_title, tickfont=dict(color=KRT_WHITE))),
-        line=dict(color=KRT_GRID, width=1),
         customdata=customdata,
         hovertemplate=hovertemplate,
-        name="Percurso (GPS)",
+        name="Checkpoints",
     ))
-    fig = _base_layout(fig, "Traçado do Percurso — GPS", "Longitude", "Latitude")
-    fig.update_yaxes(scaleanchor="x", scaleratio=1)
+
+    fig = _base_layout(fig, "Traçado do Percurso — GPS", "", "")
+    fig.update_xaxes(showgrid=False, zeroline=False, showticklabels=False)
+    fig.update_yaxes(showgrid=False, zeroline=False, showticklabels=False, scaleanchor="x", scaleratio=1)
+    fig.update_layout(showlegend=False)
     return fig
 
 
