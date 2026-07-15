@@ -284,7 +284,10 @@ def _tela_home_individual(sessions):
         ("Direção x Frenagem", charts.steering_brake_combined_chart(telemetry),
          "Sobrepor ângulo de volante e pressão de freio ajuda a identificar trail-braking "
          "e a coordenação entre entrada de curva e frenagem."),
-        ("Traçado GPS", charts.gps_track_chart(telemetry), None),
+        ("Traçado GPS", charts.gps_track_chart(telemetry),
+         "Passe o mouse sobre qualquer ponto do traçado para ver a telemetria completa "
+         "(velocidade, G, pressão de freio, volante) naquele instante do circuito. Use o "
+         "seletor acima do gráfico para colorir o traçado pela variável de interesse."),
         ("Distribuições", charts.distribution_histograms(telemetry),
          "Mostra a frequência de cada faixa de G, velocidade e pressão de freio — "
          "complementa o Diagrama G-G indicando quanto tempo o carro passou em cada regime."),
@@ -297,6 +300,15 @@ def _tela_home_individual(sessions):
         tabs = st.tabs([t[0] for t in available_tabs])
         for tab, (title, fig, caption) in zip(tabs, available_tabs):
             with tab:
+                if title == "Traçado GPS":
+                    color_options = charts.gps_track_color_options(telemetry)
+                    keys_by_label = {label: key for key, label in color_options}
+                    color_label = st.selectbox(
+                        "Colorir traçado por",
+                        list(keys_by_label.keys()),
+                        key=f"gps_color_by_{id_sel}",
+                    )
+                    fig = charts.gps_track_chart(telemetry, color_by=keys_by_label[color_label])
                 st.plotly_chart(fig, use_container_width=True)
                 if caption:
                     st.caption(caption)

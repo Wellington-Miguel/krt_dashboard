@@ -209,22 +209,74 @@ def steering_brake_combined_chart(df: pd.DataFrame):
     return fig
 
 
-def gps_track_chart(df: pd.DataFrame):
-    """Traçado do percurso via GPS (Latitude x Longitude), colorido pela ordem
-    temporal. Retorna None se não houver fix de GPS válido nesta sessão."""
+GPS_COLOR_OPTIONS = [
+    ("tempo", "Tempo (ordem cronológica)"),
+    ("velocidade", "Velocidade"),
+    ("ax", "Aceleração Longitudinal (Ax)"),
+    ("ay", "Aceleração Lateral (Ay)"),
+    ("pressao_fluido", "Pressão de Freio"),
+    ("angulo_volante", "Ângulo de Volante"),
+]
+
+# (coluna, rótulo, formato numérico, unidade) — usado tanto para colorir o
+# traçado quanto para montar o hover com a telemetria daquele ponto do circuito.
+_GPS_HOVER_CHANNELS = [
+    ("velocidade", "Velocidade", ".0f", "km/h"),
+    ("ax", "Acel. Longitudinal (Ax)", ".2f", "g"),
+    ("ay", "Acel. Lateral (Ay)", ".2f", "g"),
+    ("pressao_fluido", "Pressão de Freio", ".1f", ""),
+    ("angulo_volante", "Ângulo de Volante", ".0f", "°"),
+]
+
+
+def gps_track_color_options(df: pd.DataFrame) -> list:
+    """Opções de variável para colorir o traçado GPS, considerando só o que
+    tem dado real nesta sessão. Sempre inclui 'tempo' (ordem cronológica)."""
+    options = [("tempo", "Tempo (ordem cronológica)")]
+    for col, label, *_ in _GPS_HOVER_CHANNELS:
+        if _has_data(df, col):
+            options.append((col, label))
+    return options
+
+
+def gps_track_chart(df: pd.DataFrame, color_by: str = "tempo"):
+    """Traçado do percurso via GPS (Latitude x Longitude), colorido pela
+    variável escolhida (tempo, por padrão) e com hover exibindo a telemetria
+    completa disponível (velocidade, G, freio, volante) naquele ponto do
+    circuito. Retorna None se não houver fix de GPS válido nesta sessão."""
     if not (_has_data(df, "latitude") and _has_data(df, "longitude")):
         return None
     valid = df.dropna(subset=["latitude", "longitude"])
     valid = valid[(valid["latitude"] != 0) & (valid["longitude"] != 0)]
     if valid.empty:
         return None
+
     t = _time_seconds(valid)
+
+    present_channels = [ch for ch in _GPS_HOVER_CHANNELS if _has_data(valid, ch[0])]
+    customdata = np.column_stack([t] + [valid[col] for col, *_ in present_channels])
+
+    hover_lines = ["<b>Tempo:</b> %{customdata[0]:.1f} s"]
+    for i, (col, label, fmt, unit) in enumerate(present_channels, start=1):
+        suffix = f" {unit}" if unit else ""
+        hover_lines.append(f"<b>{label}:</b> %{{customdata[{i}]:{fmt}}}{suffix}")
+    hovertemplate = "<br>".join(hover_lines) + "<extra></extra>"
+
+    if color_by != "tempo" and _has_data(valid, color_by):
+        color_series = valid[color_by]
+        colorbar_title = dict(GPS_COLOR_OPTIONS).get(color_by, color_by)
+    else:
+        color_series = t
+        colorbar_title = "Tempo (s)"
+
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=valid["longitude"], y=valid["latitude"], mode="markers+lines",
-        marker=dict(size=4, color=t, colorscale=[[0, "#4FC3F7"], [1, KRT_GOLD]],
-                    colorbar=dict(title="Tempo (s)", tickfont=dict(color=KRT_WHITE))),
+        marker=dict(size=5, color=color_series, colorscale=[[0, "#4FC3F7"], [0.5, KRT_GOLD], [1, "#EF5350"]],
+                    colorbar=dict(title=colorbar_title, tickfont=dict(color=KRT_WHITE))),
         line=dict(color=KRT_GRID, width=1),
+        customdata=customdata,
+        hovertemplate=hovertemplate,
         name="Percurso (GPS)",
     ))
     fig = _base_layout(fig, "Traçado do Percurso — GPS", "Longitude", "Latitude")
