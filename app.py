@@ -614,13 +614,15 @@ def _tela_ingestao_lote():
         })
     default_df = pd.DataFrame(default_rows)
 
+    # Remove a coluna com objetos complexos ANTES de passar para o data_editor
+    df_for_editor = default_df.drop(columns=["arquivo_obj"])
+
     edited_df = st.data_editor(
-        default_df,
+        df_for_editor,
         use_container_width=True,
         hide_index=True,
         disabled=["nome_arquivo"],
         column_config={
-            "arquivo_obj": None, # Esconde a coluna do objeto de arquivo da UI
             "nome_arquivo": st.column_config.TextColumn("Arquivo"),
             "nome_teste": st.column_config.TextColumn("Nome do teste", required=True),
             "data_teste": st.column_config.DateColumn("Data do teste", required=True),
@@ -642,9 +644,9 @@ def _tela_ingestao_lote():
             rows = []
             parse_errors = []
             skipped_short_tests = []
-            # Itera sobre o dataframe editado para pegar os metadados e o objeto do arquivo associado
-            for _, meta in edited_df.iterrows():
-                f_obj = meta["arquivo_obj"] # Acessa o objeto do arquivo
+            # Itera sobre o dataframe editado e usa o índice para buscar o objeto do arquivo original
+            for idx, meta in edited_df.iterrows():
+                f_obj = default_df.loc[idx, "arquivo_obj"] # Acessa o objeto do arquivo pelo índice
                 try:
                     df_tel, noise_events, unrecognized = db.parse_datalog_csv(f_obj)
                     duration_s = (df_tel["timestamp_ms"].max() - df_tel["timestamp_ms"].min()) / 1000.0
