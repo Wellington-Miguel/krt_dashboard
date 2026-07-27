@@ -35,6 +35,20 @@ def _session_label(sessions_df, id_sessao):
         return f"{titulo} · {piloto_text} ({row['data_teste']})"
     return f"{titulo} · (sem piloto) ({row['data_teste']})"
 
+def gps_track_color_options(df: pd.DataFrame) -> list:
+    """Retorna as opções de coloração para o traçado GPS, baseadas nos
+    dados disponíveis nesta sessão."""
+    opts = [("tempo", "Tempo")]
+    if "velocidade" in df.columns and df["velocidade"].notna().any():
+        opts.append(("velocidade", "Velocidade"))
+    if "ax" in df.columns and df["ax"].notna().any():
+        opts.append(("ax", "Aceleração Long. (Ax)"))
+    if "ay" in df.columns and df["ay"].notna().any():
+        opts.append(("ay", "Aceleração Lat. (Ay)"))
+    if "pressao_fluido" in df.columns and df["pressao_fluido"].notna().any():
+        opts.append(("pressao_fluido", "Pressão de Freio"))
+    return opts
+
 
 def _session_kpis(id_sessao, label, telemetry):
     if telemetry.empty:
@@ -146,6 +160,7 @@ def tela_home():
     st.markdown("---")
 
     if modo == "Sessão individual":
+        st.session_state.pop("selected_group_session_id", None)  # Clear any group individual selection
         _tela_home_individual(sessions)
     else:
         _tela_home_grupo()
@@ -204,10 +219,15 @@ def _tela_home_individual(sessions):
         st.warning("Nenhuma sessão encontrada para os filtros selecionados.")
         return
 
+    # Lógica para manter a seleção ao vir de uma análise de grupo
+    default_id_sel = st.session_state.get("selected_group_session_id", filtered["id_sessao"].iloc[0])
+    default_index = filtered["id_sessao"].tolist().index(default_id_sel) if default_id_sel in filtered["id_sessao"].tolist() else 0
+
     id_sel = st.selectbox(
         "Selecione uma sessão para análise detalhada",
         filtered["id_sessao"].tolist(),
         format_func=lambda i: _session_label(filtered, i),
+        index=default_index,
     )
 
     telemetry = db.load_session_telemetry(id_sel)
@@ -354,6 +374,15 @@ def _tela_home_grupo():
     if descricao:
         st.caption(descricao)
 
+    st.markdown("---")
+    analysis_mode = st.radio(
+        "Modo de Análise do Grupo",
+        ["Comparativo entre Sessões", "Analisar Sessão Individualmente"],
+        horizontal=True,
+        key="group_analysis_mode"
+    )
+    st.markdown("---")
+
     sessions_in_group = db.list_sessions_in_group(id_grupo)
     if sessions_in_group.empty:
         st.warning("Este grupo ainda não possui sessões vinculadas.")
@@ -361,71 +390,87 @@ def _tela_home_grupo():
 
     all_ids = sessions_in_group["id_sessao"].tolist()
     ids_sel = st.multiselect(
-        "Sessões a incluir na comparação",
+        "Sessões a incluir na análise",
         all_ids,
         default=all_ids,
         format_func=lambda i: _session_label(sessions_in_group, i),
     )
     if not ids_sel:
-        st.warning("Selecione ao menos uma sessão.")
+        st.warning("Selecione ao menos uma sessão para análise.")
         return
 
-    telemetry_by_id = {}
-    kpi_rows = []
-    warnings_by_session = []
-    for i in ids_sel:
-        label = _session_label(sessions_in_group, i)
-        tel = db.load_session_telemetry(i)
-        if tel.empty:
-            continue
-        telemetry_by_id[label] = tel
-        kpi_row = _session_kpis(i, label, tel)
-        if kpi_row:
-            kpi_rows.append(kpi_row)
-        temp_status = validation.check_temp_sensors(tel)
-        for col, info in temp_status.items():
-            if info["stuck"]:
-                warnings_by_session.append(f"⚠️ **{label}** — sensor **{info['label']}** travado "
-                                           f"(σ = {info['std']:.2f}°C).")
-        noise_df = db.load_session_noise_events(i)
-        if noise_df is not None and not noise_df.empty:
-            warnings_by_session.append(f"⚡ **{label}** — {len(noise_df)} evento(s) de ruído elétrico no datalog.")
+    if analysis_mode == "Comparativo entre Sessões":
+        telemetry_by_id = {}
+        kpi_rows = []
+        warnings_by_session = []
+        for i in ids_sel:
+            label = _session_label(sessions_in_group, i)
+            tel = db.load_session_telemetry(i)
+            if tel.empty:
+                continue
+            telemetry_by_id[label] = tel
+            kpi_row = _session_kpis(i, label, tel)
+            if kpi_row:
+                kpi_rows.append(kpi_row)
+            temp_status = validation.check_temp_sensors(tel)
+            for col, info in temp_status.items():
+                if info["stuck"]:
+                    warnings_by_session.append(f"⚠️ **{label}** — sensor **{info['label']}** travado "
+                                               f"(σ = {info['std']:.2f}°C).")
+            noise_df = db.load_session_noise_events(i)
+            if noise_df is not None and not noise_df.empty:
+                warnings_by_session.append(f"⚡ **{label}** — {len(noise_df)} evento(s) de ruído elétrico no datalog.")
 
-    if warnings_by_session:
-        with st.expander(f"⚠️ {len(warnings_by_session)} alerta(s) neste grupo", expanded=False):
-            for w in warnings_by_session:
-                st.markdown(f'<div class="krt-alert-warn">{w}</div>', unsafe_allow_html=True)
+        if warnings_by_session:
+            with st.expander(f"⚠️ {len(warnings_by_session)} alerta(s) neste grupo", expanded=False):
+                for w in warnings_by_session:
+                    st.markdown(f'<div class="krt-alert-warn">{w}</div>', unsafe_allow_html=True)
 
-    st.markdown("---")
-    st.markdown("#### Comparativo de KPIs entre sessões")
-    kpi_df = pd.DataFrame(kpi_rows)
-    if not kpi_df.empty:
-        rename_map = {
-            "sessao": "Sessão", "duracao_s": "Duração (s)", "ax_max": "Ax máx (g)",
-            "ay_max": "Ay máx (g)", "temp_dd": "Temp DD (°C)", "temp_td": "Temp TD (°C)",
-            "temp_de": "Temp DE (°C)", "temp_te": "Temp TE (°C)", "thermocouple_max": "Termopar máx (°C)",
-            "pressao_max": "Pressão freio máx.",
-        }
-        display_kpi = kpi_df.rename(columns=rename_map).drop(columns=["id_sessao"])
-        st.dataframe(display_kpi, use_container_width=True, hide_index=True)
+        st.markdown("---")
+        st.markdown("#### Comparativo de KPIs entre sessões")
+        kpi_df = pd.DataFrame(kpi_rows)
+        if not kpi_df.empty:
+            rename_map = {
+                "sessao": "Sessão", "duracao_s": "Duração (s)", "ax_max": "Ax máx (g)",
+                "ay_max": "Ay máx (g)", "temp_dd": "Temp DD (°C)", "temp_td": "Temp TD (°C)",
+                "temp_de": "Temp DE (°C)", "temp_te": "Temp TE (°C)", "thermocouple_max": "Termopar máx (°C)",
+                "pressao_max": "Pressão freio máx.",
+            }
+            display_kpi = kpi_df.rename(columns=rename_map).drop(columns=["id_sessao"])
+            st.dataframe(display_kpi, use_container_width=True, hide_index=True)
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    group_tab_specs = [
-        ("Diagrama G-G Comparativo", charts.gg_diagram_multi(telemetry_by_id),
-         "Cada cor representa uma sessão do grupo — útil para comparar consistência "
-         "de pilotagem ou efeito de mudanças de setup ao longo dos dias."),
-        ("Temperatura de Pico por Roda", charts.group_peak_temp_bar(kpi_df) if not kpi_df.empty else None, None),
-    ]
-    available_group_tabs = [(t, f, c) for t, f, c in group_tab_specs if f is not None]
-    if not available_group_tabs:
-        st.info("Nenhuma das sessões selecionadas possui dados suficientes para os gráficos comparativos.")
-    else:
-        tabs = st.tabs([t[0] for t in available_group_tabs])
-        for tab, (title, fig, caption) in zip(tabs, available_group_tabs):
-            with tab:
-                st.plotly_chart(fig, use_container_width=True)
-                if caption:
-                    st.caption(caption)
+        st.markdown("<br>", unsafe_allow_html=True)
+        group_tab_specs = [
+            ("Diagrama G-G Comparativo", charts.gg_diagram_multi(telemetry_by_id),
+             "Cada cor representa uma sessão do grupo — útil para comparar consistência "
+             "de pilotagem ou efeito de mudanças de setup ao longo dos dias."),
+            ("Temperatura de Pico por Roda", charts.group_peak_temp_bar(kpi_df) if not kpi_df.empty else None, None),
+        ]
+        available_group_tabs = [(t, f, c) for t, f, c in group_tab_specs if f is not None]
+        if not available_group_tabs:
+            st.info("Nenhuma das sessões selecionadas possui dados suficientes para os gráficos comparativos.")
+        else:
+            tabs = st.tabs([t[0] for t in available_group_tabs])
+            for tab, (title, fig, caption) in zip(tabs, available_group_tabs):
+                with tab:
+                    st.plotly_chart(fig, use_container_width=True)
+                    if caption:
+                        st.caption(caption)
+    else:  # analysis_mode == "Analisar Sessão Individualmente"
+        # Filtra a lista de sessões do grupo para mostrar apenas as selecionadas no multiselect
+        sessions_to_show = sessions_in_group[sessions_in_group['id_sessao'].isin(ids_sel)]
+
+        selected_session_id_from_group = st.selectbox(
+            "Selecione uma sessão do grupo para análise individual",
+            sessions_to_show["id_sessao"].tolist(),
+            format_func=lambda i: _session_label(sessions_to_show, i),
+            key="individual_session_from_group_select"
+        )
+        if selected_session_id_from_group:
+            # Armazena o ID para que a tela de sessão individual possa pré-selecioná-lo
+            st.session_state["selected_group_session_id"] = selected_session_id_from_group
+            # Reutiliza a função de renderização da tela individual
+            _tela_home_individual(db.list_sessions())
 
 
 # ---------------------------------------------------------------------------
@@ -510,6 +555,9 @@ def _tela_ingestao_lote():
         key="modo_grupo_lote",
     )
 
+    # Constante para o filtro de duração mínima
+    MIN_TEST_DURATION_SECONDS = 10
+
     novo_nome_grupo, nova_descricao_grupo, id_grupo_existente = None, None, None
     if modo_grupo == "Criar novo grupo":
         c1, c2 = st.columns(2)
@@ -534,14 +582,30 @@ def _tela_ingestao_lote():
         st.info("Selecione um ou mais arquivos CSV para configurar os metadados de cada sessão.")
         return
 
+    # Filtra arquivos de 0KB antes de exibi-los no editor
+    valid_files = []
+    skipped_0kb_files = []
+    for f in arquivos:
+        if f.size == 0:
+            skipped_0kb_files.append(f.name)
+        else:
+            valid_files.append(f)
+
+    if skipped_0kb_files:
+        st.warning(f"Os seguintes arquivos foram ignorados por terem 0KB: {', '.join(skipped_0kb_files)}")
+
+    if not valid_files:
+        return
+
     st.markdown("#### Metadados de cada sessão")
     st.caption("Edite livremente os campos abaixo — cada linha corresponde a um arquivo enviado.")
 
     default_rows = []
-    for f in arquivos:
+    for f in valid_files:
         nome_padrao = f.name.rsplit(".", 1)[0]
         default_rows.append({
-            "arquivo": f.name,
+            "arquivo_obj": f, # Armazena o objeto do arquivo para uso posterior
+            "nome_arquivo": f.name,
             "nome_teste": nome_padrao,
             "data_teste": date.today(),
             "nome_piloto": "",
@@ -554,9 +618,10 @@ def _tela_ingestao_lote():
         default_df,
         use_container_width=True,
         hide_index=True,
-        disabled=["arquivo"],
+        disabled=["nome_arquivo"],
         column_config={
-            "arquivo": st.column_config.TextColumn("Arquivo"),
+            "arquivo_obj": None, # Esconde a coluna do objeto de arquivo da UI
+            "nome_arquivo": st.column_config.TextColumn("Arquivo"),
             "nome_teste": st.column_config.TextColumn("Nome do teste", required=True),
             "data_teste": st.column_config.DateColumn("Data do teste", required=True),
             "nome_piloto": st.column_config.TextColumn("Piloto"),
@@ -576,11 +641,22 @@ def _tela_ingestao_lote():
         with st.spinner("Processando arquivos e enviando para o banco..."):
             rows = []
             parse_errors = []
-            for f, (_, meta) in zip(arquivos, edited_df.iterrows()):
+            skipped_short_tests = []
+            # Itera sobre o dataframe editado para pegar os metadados e o objeto do arquivo associado
+            for _, meta in edited_df.iterrows():
+                f_obj = meta["arquivo_obj"] # Acessa o objeto do arquivo
                 try:
-                    df_tel, noise_events, unrecognized = db.parse_datalog_csv(f)
+                    df_tel, noise_events, unrecognized = db.parse_datalog_csv(f_obj)
+                    duration_s = (df_tel["timestamp_ms"].max() - df_tel["timestamp_ms"].min()) / 1000.0
+                    if duration_s < MIN_TEST_DURATION_SECONDS:
+                        skipped_short_tests.append(f"{f_obj.name} (duração: {duration_s:.1f} s)")
+                        continue
                 except ValueError as e:
-                    parse_errors.append(f"**{f.name}**: {e}")
+                    parse_errors.append(f"**{f_obj.name}**: {e}")
+                    continue
+                except Exception as e:
+                    # Captura outros erros inesperados durante o parse
+                    parse_errors.append(f"**{f_obj.name}**: Erro inesperado durante o processamento: {e}")
                     continue
                 rows.append({
                     "nome_teste": meta["nome_teste"],
@@ -593,11 +669,14 @@ def _tela_ingestao_lote():
                     "unrecognized": unrecognized,
                 })
 
+            if skipped_short_tests:
+                st.warning(f"Os seguintes arquivos foram ignorados por terem duração total menor que "
+                           f"{MIN_TEST_DURATION_SECONDS} segundos: {', '.join(skipped_short_tests)}")
             if parse_errors:
                 for e in parse_errors:
                     st.error(e)
             if not rows:
-                st.error("Nenhum arquivo pôde ser processado.")
+                st.error("Nenhum arquivo válido pôde ser processado para inserção.")
                 return
 
             if modo_grupo == "Criar novo grupo":
@@ -608,7 +687,7 @@ def _tela_ingestao_lote():
             ids_sessao = db.insert_batch_sessions(rows, id_grupo=id_grupo)
             db.clear_caches()
 
-        st.success(f"✅ {len(ids_sessao)} sessão(ões) cadastrada(s) e vinculada(s) ao grupo com sucesso!")
+        st.success(f"✅ {len(ids_sessao)} sessão(ões) válida(s) cadastrada(s) e vinculada(s) ao grupo com sucesso!")
 
         for row, id_sessao in zip(rows, ids_sessao):
             vp_check = validation.check_velocidade_peso(row["df"])
