@@ -155,6 +155,7 @@ def get_metadata():
         Column("nome_piloto", String(100), nullable=True),
         Column("config_carro", Text),
         Column("observacoes", Text),
+        Column("csv_header", Text),
         Column("data_upload", DateTime, default=datetime.utcnow),
     )
 
@@ -253,7 +254,7 @@ def _decode_line(raw_bytes: bytes) -> str:
 
 def parse_datalog_csv(file_bytes_or_buffer):
     """Lê um CSV bruto da ESP32 (formato antigo OU novo, ou qualquer subconjunto de
-    colunas reconhecidas) e devolve:
+    colunas reconhecidas) e devolve um dicionário com:
         (df, noise_events, unrecognized_columns)
 
     df: DataFrame já normalizado para o schema canônico do banco (colunas ausentes
@@ -351,7 +352,12 @@ def parse_datalog_csv(file_bytes_or_buffer):
     if len(noise_events) > MAX_NOISE_SAMPLES_STORED:
         noise_events = noise_events[:MAX_NOISE_SAMPLES_STORED]
 
-    return df, noise_events, unrecognized_columns
+    return {
+        "df": df,
+        "noise_events": noise_events,
+        "unrecognized_columns": unrecognized_columns,
+        "header_line": header_line,
+    }
 
 
 def available_columns(df: pd.DataFrame) -> list:
@@ -369,7 +375,7 @@ def _normalize_optional_text(value):
 
 
 def insert_session(nome_teste, data_teste, nome_piloto, config_carro, observacoes,
-                    telemetry_df: pd.DataFrame, noise_events=None, id_grupo=None):
+                    telemetry_df: pd.DataFrame, csv_header=None, noise_events=None, id_grupo=None):
     """Insere uma nova sessão de teste + bulk insert dos dados de telemetria e,
     se houver, dos eventos de ruído elétrico detectados durante o parse."""
     engine, backend = get_engine()
@@ -387,6 +393,7 @@ def insert_session(nome_teste, data_teste, nome_piloto, config_carro, observacoe
                 nome_piloto=nome_piloto,
                 config_carro=config_carro,
                 observacoes=observacoes,
+                csv_header=csv_header,
                 data_upload=datetime.utcnow(),
             )
         )
@@ -450,6 +457,7 @@ def insert_batch_sessions(rows: list, id_grupo=None):
             config_carro=row.get("config_carro"),
             observacoes=row.get("observacoes"),
             telemetry_df=row["df"],
+            csv_header=row.get("csv_header"),
             noise_events=row.get("noise_events"),
             id_grupo=id_grupo,
         )

@@ -509,15 +509,20 @@ def _tela_ingestao_unica():
             st.error("Preencha o nome do teste e selecione um arquivo CSV.")
             return
         try:
-            df, noise_events, unrecognized = db.parse_datalog_csv(arquivo)
+            parsed_data = db.parse_datalog_csv(arquivo)
+            df = parsed_data["df"]
+            noise_events = parsed_data["noise_events"]
+            unrecognized = parsed_data["unrecognized_columns"]
         except ValueError as e:
             st.error(str(e))
             return
 
         with st.spinner("Validando e enviando dados para o banco..."):
             vp_check = validation.check_velocidade_peso(df)
-            id_sessao = db.insert_session(nome_teste, data_teste, nome_piloto, config_carro, observacoes,
-                                           df, noise_events=noise_events)
+            id_sessao = db.insert_session(
+                nome_teste, data_teste, nome_piloto, config_carro, observacoes,
+                df, csv_header=parsed_data.get("header_line"), noise_events=noise_events
+            )
             db.clear_caches()
 
         cols_presentes = db.available_columns(df)
@@ -648,7 +653,11 @@ def _tela_ingestao_lote():
             for idx, meta in edited_df.iterrows():
                 f_obj = default_df.loc[idx, "arquivo_obj"] # Acessa o objeto do arquivo pelo índice
                 try:
-                    df_tel, noise_events, unrecognized = db.parse_datalog_csv(f_obj)
+                    parsed_data = db.parse_datalog_csv(f_obj)
+                    df_tel = parsed_data["df"]
+                    noise_events = parsed_data["noise_events"]
+                    unrecognized = parsed_data["unrecognized_columns"]
+                    header_line = parsed_data.get("header_line")
                     duration_s = (df_tel["timestamp_ms"].max() - df_tel["timestamp_ms"].min()) / 1000.0
                     if duration_s < MIN_TEST_DURATION_SECONDS:
                         skipped_short_tests.append(f"{f_obj.name} (duração: {duration_s:.1f} s)")
@@ -667,6 +676,7 @@ def _tela_ingestao_lote():
                     "config_carro": meta["config_carro"],
                     "observacoes": meta["observacoes"],
                     "df": df_tel,
+                    "csv_header": header_line,
                     "noise_events": noise_events,
                     "unrecognized": unrecognized,
                 })
