@@ -279,7 +279,7 @@ def _decode_line(raw_bytes: bytes) -> str:
 def _is_numeric(s: str) -> bool:
     """Verifica se uma string pode ser convertida para um número (int ou float)."""
     try:
-        float(s)
+        float(s.strip())
         return True
     except (ValueError, TypeError):
         return False
