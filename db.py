@@ -93,12 +93,19 @@ _ALIASES = {
 
 # Mapeamento de colunas por índice para datalogs SEM CABEÇALHO.
 # A chave é o número de colunas detectado na linha.
+# NOTA: Se houver múltiplos formatos com o mesmo número de colunas,
+# a heurística pode não ser capaz de diferenciá-los.
 HEADERLESS_COLUMN_MAP = {
-    # Datalog "clássico" (pré-2024)
-    13: [
+    # Datalog "clássico" (pré-2024) - 13 colunas
+    "13_classic": [
         "timestamp_ms", "ax", "ay", "az", "gx", "gy", "gz",
         "temp_dd", "temp_td", "temp_de", "temp_te",
         "thermocouple", "velocidade"
+    ],
+    # Datalog novo (sem giroscópio, com GPS) - 13 colunas
+    "13_new": [
+        "timestamp_ms", "temp_dd", "temp_td", "temp_te", "temp_de", "ax", "ay", "az",
+        "angulo_volante", "pressao_fluido", "latitude", "longitude", "satelites"
     ],
     # Datalog "novo" (com GPS, sem giroscópio/termopar)
     11: [
@@ -127,17 +134,23 @@ def _normalize_header(name: str) -> str:
 
 
 def _build_column_index_map(header_fields):
-    """Retorna {indice_da_coluna: nome_canonico} e lista de colunas não reconhecidas."""
+    """Retorna {indice_da_coluna: nome_canonico} e lista de colunas não reconhecidas.
+    Assume que a primeira coluna (índice 0) é sempre o timestamp."""
     reverse = {}
     for canon, aliases in _ALIASES.items():
         for a in aliases:
             reverse[a] = canon
 
-    col_map = {}
+    col_map = {0: "timestamp_ms"}  # Regra: primeira coluna é sempre o tempo.
     unrecognized = []
-    for idx, raw in enumerate(header_fields):
+    # Começa a mapear a partir da segunda coluna (índice 1)
+    for idx, raw in enumerate(header_fields[1:], start=1):
         key = _normalize_header(raw)
         canon = reverse.get(key)
+        # Caso especial: se outro alias de tempo for encontrado em outra coluna, ignorar.
+        if canon == "timestamp_ms":
+            unrecognized.append(raw.strip())
+            continue
         if canon:
             col_map[idx] = canon
         else:
@@ -324,8 +337,11 @@ def parse_datalog_csv(file_bytes_or_buffer):
         # Heurística: se todos os campos da primeira linha são numéricos, é um datalog sem cabeçalho.
         if all(_is_numeric(f) for f in first_line_fields):
             num_cols = len(first_line_fields)
-            if num_cols in HEADERLESS_COLUMN_MAP:
-                header_fields = HEADERLESS_COLUMN_MAP[num_cols]
+            # Para 13 colunas, assume o formato novo, que é o mais recente.
+            map_key = "13_new" if num_cols == 13 else num_cols
+            
+            if map_key in HEADERLESS_COLUMN_MAP:
+                header_fields = HEADERLESS_COLUMN_MAP[map_key]
                 header_line = ",".join(header_fields)
                 data_start_line_index = 0 # Começa a ler dados da primeira linha
             else:
@@ -339,11 +355,6 @@ def parse_datalog_csv(file_bytes_or_buffer):
         raise ValueError(f"Falha ao processar a primeira linha do arquivo: {e}")
 
     col_map, unrecognized_columns = _build_column_index_map(header_fields)
-    if "timestamp_ms" not in col_map.values():
-        raise ValueError(
-            "O arquivo CSV não contém uma coluna de tempo reconhecível "
-            "(ex: 'Timestamp' ou 'Tempo(ms)'). Verifique se é um datalog da ESP32 da KRT."
-        )
     data_cols_found = [c for c in col_map.values() if c != "timestamp_ms"]
     if not data_cols_found:
         raise ValueError(
