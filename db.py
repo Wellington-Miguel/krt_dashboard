@@ -91,6 +91,30 @@ _ALIASES = {
     "satelites": {"satelites", "satellites", "sats", "nsatelites"},
 }
 
+# Mapeamento de colunas por índice para datalogs SEM CABEÇALHO.
+# A chave é o número de colunas detectado na linha.
+HEADERLESS_COLUMN_MAP = {
+    # Datalog "clássico" (pré-2024)
+    13: [
+        "timestamp_ms", "ax", "ay", "az", "gx", "gy", "gz",
+        "temp_dd", "temp_td", "temp_de", "temp_te",
+        "thermocouple", "velocidade"
+    ],
+    # Datalog "novo" (com GPS, sem giroscópio/termopar)
+    11: [
+        "timestamp_ms", "ax", "ay", "az",
+        "temp_dd", "temp_td", "temp_de", "temp_te",
+        "angulo_volante", "pressao_fluido", "velocidade"
+        # GPS é adicionado separadamente se tiver mais colunas
+    ],
+    14: [ # Datalog novo com GPS
+        "timestamp_ms", "ax", "ay", "az",
+        "temp_dd", "temp_td", "temp_de", "temp_te",
+        "angulo_volante", "pressao_fluido", "velocidade",
+        "latitude", "longitude", "satelites"
+    ]
+}
+
 NUMERIC_COLUMNS = [c for c in CANONICAL_COLUMNS if c != "timestamp_ms"]
 
 MAX_NOISE_SAMPLES_STORED = 200  # limite de eventos de ruído guardados por sessão
@@ -252,6 +276,14 @@ def _decode_line(raw_bytes: bytes) -> str:
     return raw_bytes.decode("utf-8")
 
 
+def _is_numeric(s: str) -> bool:
+    """Verifica se uma string pode ser convertida para um número (int ou float)."""
+    try:
+        float(s)
+        return True
+    except (ValueError, TypeError):
+        return False
+
 def parse_datalog_csv(file_bytes_or_buffer):
     """Lê um CSV bruto da ESP32 (formato antigo OU novo, ou qualquer subconjunto de
     colunas reconhecidas) e devolve um dicionário com:
@@ -280,14 +312,33 @@ def parse_datalog_csv(file_bytes_or_buffer):
     if not lines:
         raise ValueError("Arquivo CSV vazio.")
 
+    header_line = ""
+    header_fields = []
+    data_start_line_index = 1
+    first_line_is_header = False
+
     try:
-        header_line = _decode_line(lines[0])
-    except UnicodeDecodeError:
-        raise ValueError("O cabeçalho do CSV está corrompido e não pôde ser lido.")
+        first_line_str = _decode_line(lines[0])
+        first_line_fields = next(csv.reader([first_line_str]))
 
-    header_fields = next(csv.reader([header_line]))
+        # Heurística: se todos os campos da primeira linha são numéricos, é um datalog sem cabeçalho.
+        if all(_is_numeric(f) for f in first_line_fields):
+            num_cols = len(first_line_fields)
+            if num_cols in HEADERLESS_COLUMN_MAP:
+                header_fields = HEADERLESS_COLUMN_MAP[num_cols]
+                header_line = ",".join(header_fields)
+                data_start_line_index = 0 # Começa a ler dados da primeira linha
+            else:
+                raise ValueError(f"Arquivo sem cabeçalho com número de colunas não reconhecido ({num_cols}).")
+        else:
+            first_line_is_header = True
+            header_line = first_line_str
+            header_fields = first_line_fields
+            data_start_line_index = 1
+    except (UnicodeDecodeError, ValueError) as e:
+        raise ValueError(f"Falha ao processar a primeira linha do arquivo: {e}")
+
     col_map, unrecognized_columns = _build_column_index_map(header_fields)
-
     if "timestamp_ms" not in col_map.values():
         raise ValueError(
             "O arquivo CSV não contém uma coluna de tempo reconhecível "
@@ -305,7 +356,7 @@ def parse_datalog_csv(file_bytes_or_buffer):
     noise_events = []
     last_good_ts = None
 
-    for line_no, raw_line in enumerate(lines[1:], start=2):
+    for line_no, raw_line in enumerate(lines[data_start_line_index:], start=data_start_line_index + 1):
         if raw_line.strip() == b"":
             continue
         try:
@@ -356,7 +407,7 @@ def parse_datalog_csv(file_bytes_or_buffer):
         "df": df,
         "noise_events": noise_events,
         "unrecognized_columns": unrecognized_columns,
-        "header_line": header_line,
+        "header_line": header_line if first_line_is_header else f"Gerado: {header_line}",
     }
 
 
