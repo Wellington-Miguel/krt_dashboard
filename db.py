@@ -337,8 +337,21 @@ def parse_datalog_csv(file_bytes_or_buffer):
         # Heurística: se todos os campos da primeira linha são numéricos, é um datalog sem cabeçalho.
         if all(_is_numeric(f) for f in first_line_fields):
             num_cols = len(first_line_fields)
-            # Para 13 colunas, assume o formato novo, que é o mais recente.
-            map_key = "13_new" if num_cols == 13 else num_cols
+            map_key = None
+            if num_cols == 13:
+                # Heurística para diferenciar os dois formatos de 13 colunas:
+                # O formato "clássico" tem giroscópio (valores pequenos) na 5ª coluna (idx 4),
+                # enquanto o formato "novo" tem temperatura (valores maiores).
+                try:
+                    quinta_coluna_valor = float(first_line_fields[4])
+                    if abs(quinta_coluna_valor) < 1.0: # Provavelmente giroscópio
+                        map_key = "13_classic"
+                    else: # Provavelmente temperatura
+                        map_key = "13_new"
+                except (ValueError, IndexError):
+                    map_key = "13_new" # Fallback para o mais recente
+            elif num_cols in HEADERLESS_COLUMN_MAP:
+                map_key = num_cols
             
             if map_key in HEADERLESS_COLUMN_MAP:
                 header_fields = HEADERLESS_COLUMN_MAP[map_key]
