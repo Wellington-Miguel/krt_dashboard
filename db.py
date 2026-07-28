@@ -297,6 +297,14 @@ def _is_numeric(s: str) -> bool:
     except (ValueError, TypeError):
         return False
 
+
+def _is_numeric_or_blank(s: str) -> bool:
+    """Como _is_numeric, mas aceita campo vazio como válido.
+    Datalogs sem cabeçalho frequentemente têm campos em branco na primeira
+    linha (sensor não conectado nesse ensaio, GPS ainda sem fix, etc.) —
+    um campo vazio não descaracteriza a linha como sendo "dado numérico"."""
+    return s.strip() == "" or _is_numeric(s)
+
 def parse_datalog_csv(file_bytes_or_buffer):
     """Lê um CSV bruto da ESP32 (formato antigo OU novo, ou qualquer subconjunto de
     colunas reconhecidas) e devolve um dicionário com:
@@ -334,8 +342,13 @@ def parse_datalog_csv(file_bytes_or_buffer):
         first_line_str = _decode_line(lines[0])
         first_line_fields = next(csv.reader([first_line_str]))
 
-        # Heurística: se todos os campos da primeira linha são numéricos, é um datalog sem cabeçalho.
-        if all(_is_numeric(f) for f in first_line_fields):
+        # Heurística: é um datalog sem cabeçalho se o timestamp (1ª coluna) é
+        # numérico e todos os demais campos são numéricos OU vazios (campo em
+        # branco = sensor não conectado/sem leitura nessa linha — não é texto
+        # de cabeçalho). Antes essa checagem exigia TODOS os campos numéricos,
+        # o que rejeitava incorretamente qualquer 1ª linha com sensor vazio.
+        if first_line_fields and _is_numeric(first_line_fields[0]) and \
+                all(_is_numeric_or_blank(f) for f in first_line_fields[1:]):
             num_cols = len(first_line_fields)
             map_key = None
             if num_cols == 13:
