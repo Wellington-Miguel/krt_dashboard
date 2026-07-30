@@ -273,8 +273,6 @@ def _tela_home_individual(sessions):
         kpis.append(("Termopar máx.", f"{telemetry['thermocouple'].max():.0f} °C"))
     if telemetry["pressao_fluido"].notna().any():
         kpis.append(("Pressão freio máx.", f"{telemetry['pressao_fluido'].max():.1f}"))
-    if telemetry["angulo_volante"].notna().any():
-        kpis.append(("Amplitude volante", f"{telemetry['angulo_volante'].max() - telemetry['angulo_volante'].min():.0f}°"))
     if noise_events_df is not None and not noise_events_df.empty:
         kpis.append(("Eventos de ruído", f"{len(noise_events_df)}"))
 
@@ -299,11 +297,7 @@ def _tela_home_individual(sessions):
         ("Peso", charts.weight_chart(telemetry), None),
         ("Termopar", charts.thermocouple_chart(telemetry), None),
         ("Giroscópio", charts.imu_chart(telemetry), None),
-        ("Ângulo de Volante", charts.steering_angle_chart(telemetry), None),
         ("Pressão de Freio", charts.brake_pressure_chart(telemetry), None),
-        ("Direção x Frenagem", charts.steering_brake_combined_chart(telemetry),
-         "Sobrepor ângulo de volante e pressão de freio ajuda a identificar trail-braking "
-         "e a coordenação entre entrada de curva e frenagem."),
         ("Traçado GPS", charts.gps_track_chart(telemetry),
          "Passe o mouse sobre qualquer ponto do traçado para ver a telemetria completa "
          "(velocidade, G, pressão de freio, volante) naquele instante do circuito. Use o "

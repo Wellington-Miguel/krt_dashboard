@@ -135,19 +135,6 @@ def imu_chart(df: pd.DataFrame):
     return fig
 
 
-def steering_angle_chart(df: pd.DataFrame):
-    """Ângulo de volante ao longo do tempo (datalogs novos)."""
-    if not _has_data(df, "angulo_volante"):
-        return None
-    t = _time_seconds(df)
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=t, y=df["angulo_volante"], mode="lines",
-                              line=dict(color=KRT_GOLD, width=2), name="Ângulo de Volante"))
-    fig.add_hline(y=df["angulo_volante"].mean(), line_color=KRT_GRID, line_dash="dot")
-    fig = _base_layout(fig, "Ângulo de Volante", "Tempo (s)", "Ângulo (°)")
-    return fig
-
-
 def speed_chart(df: pd.DataFrame):
     """Velocidade ao longo do tempo."""
     if not _has_data(df, "velocidade"):
@@ -184,38 +171,12 @@ def brake_pressure_chart(df: pd.DataFrame):
     return fig
 
 
-def steering_brake_combined_chart(df: pd.DataFrame):
-    """Ângulo de volante x Pressão de freio sobrepostos — útil para avaliar
-    trail-braking e coordenação entrada-de-curva/frenagem."""
-    has_steer = _has_data(df, "angulo_volante")
-    has_brake = _has_data(df, "pressao_fluido")
-    if not (has_steer and has_brake):
-        return None
-    t = _time_seconds(df)
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=t, y=df["angulo_volante"], mode="lines", name="Ângulo de Volante (°)",
-                              line=dict(color=KRT_GOLD, width=2), yaxis="y1"))
-    fig.add_trace(go.Scatter(x=t, y=df["pressao_fluido"], mode="lines", name="Pressão de Freio",
-                              line=dict(color="#EF5350", width=2), yaxis="y2"))
-    fig.update_layout(
-        yaxis=dict(title="Ângulo de Volante (°)", gridcolor=KRT_GRID, color=KRT_WHITE),
-        yaxis2=dict(title="Pressão de Freio", overlaying="y", side="right", color=KRT_WHITE,
-                     showgrid=False),
-    )
-    fig = _base_layout(fig, "Direção x Frenagem", "Tempo (s)", "Ângulo de Volante (°)")
-    fig.update_layout(yaxis=dict(title="Ângulo de Volante (°)", gridcolor=KRT_GRID, color=KRT_WHITE),
-                       yaxis2=dict(title="Pressão de Freio", overlaying="y", side="right",
-                                   color=KRT_WHITE, showgrid=False))
-    return fig
-
-
 GPS_COLOR_OPTIONS = [
     ("tempo", "Tempo (ordem cronológica)"),
     ("velocidade", "Velocidade"),
     ("ax", "Aceleração Longitudinal (Ax)"),
     ("ay", "Aceleração Lateral (Ay)"),
     ("pressao_fluido", "Pressão de Freio"),
-    ("angulo_volante", "Ângulo de Volante"),
 ]
 
 # (coluna, rótulo, formato numérico, unidade) — usado tanto para colorir o
@@ -225,7 +186,6 @@ _GPS_HOVER_CHANNELS = [
     ("ax", "Acel. Longitudinal (Ax)", ".2f", "g"),
     ("ay", "Acel. Lateral (Ay)", ".2f", "g"),
     ("pressao_fluido", "Pressão de Freio", ".1f", ""),
-    ("angulo_volante", "Ângulo de Volante", ".0f", "°"),
 ]
 
 

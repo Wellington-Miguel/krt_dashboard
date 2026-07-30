@@ -49,7 +49,6 @@ CANONICAL_COLUMNS = [
     "thermocouple",
     "peso",
     "velocidade",
-    "angulo_volante",
     "pressao_fluido",
     "latitude", "longitude", "satelites",
 ]
@@ -63,7 +62,6 @@ COLUMN_LABELS = {
     "thermocouple": "Termopar (Escapamento)",
     "peso": "Peso (célula de carga)",
     "velocidade": "Velocidade (Km/h)",
-    "angulo_volante": "Ângulo de Volante",
     "pressao_fluido": "Pressão de Fluido de Freio",
     "latitude": "Latitude", "longitude": "Longitude", "satelites": "Satélites (GPS)",
 }
@@ -84,7 +82,6 @@ _ALIASES = {
     "thermocouple": {"thermocouple", "termopar"},
     "peso": {"peso", "weight"},
     "velocidade": {"velociadekmh", "velocidadekmh", "velocidade", "speed", "velocidadekm"},
-    "angulo_volante": {"angulovolante", "steeringangle", "anglvolante"},
     "pressao_fluido": {"pressaofluido", "brakepressure", "pressaofreio"},
     "latitude": {"latitude", "lat"},
     "longitude": {"longitude", "lon", "lng"},
@@ -104,21 +101,20 @@ HEADERLESS_COLUMN_MAP = {
     ],
     # Datalog novo (sem giroscópio, com GPS) - 13 colunas
     "13_new": [
-        "timestamp_ms", "temp_dd", "temp_td", "temp_te", "temp_de", "ax", "ay", "az",
-        "angulo_volante", "pressao_fluido", "latitude", "longitude", "satelites"
+        "timestamp_ms", "temp_dd", "temp_td", "temp_te", "temp_de", "ax", "ay", "az", "pressao_fluido",
+        "latitude", "longitude", "satelites", "velocidade" # Adicionado velocidade para manter 13
     ],
     # Datalog "novo" (com GPS, sem giroscópio/termopar)
     11: [
         "timestamp_ms", "ax", "ay", "az",
         "temp_dd", "temp_td", "temp_de", "temp_te",
-        "angulo_volante", "pressao_fluido", "velocidade"
+        "pressao_fluido", "velocidade"
         # GPS é adicionado separadamente se tiver mais colunas
     ],
     14: [ # Datalog novo com GPS
         "timestamp_ms", "ax", "ay", "az",
         "temp_dd", "temp_td", "temp_de", "temp_te",
-        "angulo_volante", "pressao_fluido", "velocidade",
-        "latitude", "longitude", "satelites"
+        "pressao_fluido", "velocidade", "latitude", "longitude", "satelites"
     ]
 }
 
