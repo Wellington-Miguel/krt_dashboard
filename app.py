@@ -78,9 +78,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ---------------------------------------------------------------------------
 # ESTILO — Identidade visual KRT (Preto, Amarelo Ouro, Branco)
-# ---------------------------------------------------------------------------
 st.markdown("""
 <style>
     .stApp { background-color: #111111; }
@@ -120,9 +118,7 @@ except Exception:
     APP_PASSWORD = "krt2026"
 
 
-# ---------------------------------------------------------------------------
 # TELA 1 — AUTENTICAÇÃO RESTRITA
-# ---------------------------------------------------------------------------
 def tela_autenticacao():
     col1, col2, col3 = st.columns([1, 1.2, 1])
     with col2:
@@ -140,9 +136,7 @@ def tela_autenticacao():
         st.caption("Acesso restrito aos membros da equipe KRT — Formula SAE UFBA.")
 
 
-# ---------------------------------------------------------------------------
 # TELA 2 — HOME / PAINEL DE PERFORMANCE
-# ---------------------------------------------------------------------------
 def tela_home():
     st.markdown("## 📊 Painel de Performance")
 
