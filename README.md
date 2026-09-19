@@ -88,4 +88,3 @@ krt_dashboard/
 │   └── secrets.toml.example
 └── summary.py               # Resumo textual automático dos destaques do ensaio
 ```
-ghgkojkb
