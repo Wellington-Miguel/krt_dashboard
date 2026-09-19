@@ -38,9 +38,7 @@ from sqlalchemy.exc import OperationalError
 
 LOCAL_SQLITE_PATH = "sqlite:///krt_telemetry.db"
 
-# ---------------------------------------------------------------------------
 # SCHEMA CANÔNICO DE TELEMETRIA (superconjunto — cobre datalog antigo e novo)
-# ---------------------------------------------------------------------------
 CANONICAL_COLUMNS = [
     "timestamp_ms",
     "ax", "ay", "az",
